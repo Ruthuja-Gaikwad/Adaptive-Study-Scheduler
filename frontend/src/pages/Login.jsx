@@ -1,45 +1,154 @@
 import { motion } from 'motion/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Mail, Lock, ArrowLeft } from 'lucide-react';
+import { Mail, Lock, ArrowLeft, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
 
 export function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [error, setError] = useState(null);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Navigate to dashboard (in real app, this would authenticate)
-    navigate('/dashboard');
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveSession = async () => {
+      try {
+        const { data } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Session check timed out')), 6000)
+          ),
+        ]);
+
+        if (!isMounted) return;
+        const sessionUser = data?.session?.user;
+
+        if (!sessionUser) {
+          setCheckingSession(false);
+          return;
+        }
+
+        const { data: profileData, error } = await Promise.race([
+          supabase
+            .from('profiles')
+            .select('onboarding_completed')
+            .eq('id', sessionUser.id)
+            .single(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Profile check timed out')), 6000)
+          ),
+        ]);
+
+        if (!isMounted) return;
+
+        if (error || !profileData?.onboarding_completed) {
+          navigate('/onboarding', { replace: true });
+          return;
+        }
+
+        navigate('/dashboard', { replace: true });
+      } catch (err) {
+        if (isMounted) {
+          setCheckingSession(false);
+          setError('Session check failed. Please try logging in again.');
+        }
+      }
+    };
+
+    resolveSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data, error: signInError } = await Promise.race([
+        supabase.auth.signInWithPassword({ email, password }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Login timed out')), 10000)
+        ),
+      ]);
+
+      if (signInError) throw signInError;
+
+      const user = data?.user;
+
+      if (!user) {
+        navigate('/dashboard');
+        return;
+      }
+
+      const { data: profileData, error } = await Promise.race([
+        supabase
+          .from('profiles')
+          .select('onboarding_completed')
+          .eq('id', user.id)
+          .single(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Profile check timed out')), 6000)
+        ),
+      ]);
+
+      if (error || !profileData?.onboarding_completed) {
+        navigate('/onboarding');
+        return;
+      }
+
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err?.message || 'Login failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGoogleLogin = () => {
-    // Navigate to dashboard (in real app, this would use Google OAuth)
-    navigate('/dashboard');
+  const handleGoogleLogin = async () => {
+    try {
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/login`,
+        },
+      });
+
+      if (oauthError) throw oauthError;
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
     <div className="min-h-screen w-screen bg-gradient-to-br from-[#006D77] via-[#005a63] to-[#004a52] dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 relative overflow-hidden">
-      {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10 pointer-events-none">
-        <div className="absolute inset-0" style={{
-          backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)',
-          backgroundSize: '30px 30px',
-        }} />
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)',
+            backgroundSize: '30px 30px',
+          }}
+        />
       </div>
 
-      {/* Back Button */}
       <motion.button
         onClick={() => navigate('/')}
         className="absolute top-6 left-6 p-3 bg-white/10 dark:bg-gray-800/50 backdrop-blur-sm text-white rounded-lg hover:bg-white/20 dark:hover:bg-gray-700/50 transition-colors z-20"
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
+        type="button"
       >
         <ArrowLeft className="w-5 h-5" />
       </motion.button>
 
-      {/* Content */}
       <div className="relative z-10 w-full px-6 py-12 flex items-center justify-center min-h-screen">
         <motion.div
           className="w-full max-w-md"
@@ -47,9 +156,12 @@ export function Login() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          {/* Card */}
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 backdrop-blur-sm transition-colors">
-            {/* Header */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 backdrop-blur-sm transition-colors border border-white/10">
+            {checkingSession && (
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-gray-700 dark:bg-gray-900/60 dark:text-gray-300">
+                Checking your progress...
+              </div>
+            )}
             <div className="text-center mb-8">
               <motion.div
                 className="inline-block text-6xl mb-4"
@@ -66,9 +178,15 @@ export function Login() {
               </p>
             </div>
 
-            {/* Google Login */}
+            {error && (
+              <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+
             <motion.button
               onClick={handleGoogleLogin}
+              type="button"
               className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 transition-all mb-6"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -93,7 +211,6 @@ export function Login() {
               </div>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -105,7 +222,7 @@ export function Login() {
                     id="email"
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(event) => setEmail(event.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#006D77] dark:focus:ring-[#06D6A0] focus:border-transparent transition-all"
                     placeholder="alex@university.edu"
                     required
@@ -123,7 +240,7 @@ export function Login() {
                     id="password"
                     type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(event) => setPassword(event.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#006D77] dark:focus:ring-[#06D6A0] focus:border-transparent transition-all"
                     placeholder="••••••••"
                     required
@@ -131,38 +248,24 @@ export function Login() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    className="w-4 h-4 text-[#006D77] dark:text-[#06D6A0] border-gray-300 dark:border-gray-600 rounded focus:ring-[#006D77] dark:focus:ring-[#06D6A0]"
-                  />
-                  <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">Remember me</span>
-                </label>
-                <button
-                  type="button"
-                  className="text-sm text-[#006D77] dark:text-[#06D6A0] hover:underline"
-                >
-                  Forgot password?
-                </button>
-              </div>
-
               <motion.button
                 type="submit"
-                className="w-full px-6 py-3 bg-[#006D77] dark:bg-[#06D6A0] text-white dark:text-gray-900 font-semibold rounded-lg shadow-lg hover:bg-[#005a63] dark:hover:bg-[#05c295] transition-all"
+                disabled={loading}
+                className="w-full px-6 py-3 bg-[#006D77] dark:bg-[#06D6A0] text-white dark:text-gray-900 font-semibold rounded-lg shadow-lg hover:bg-[#005a63] dark:hover:bg-[#05c295] transition-all flex items-center justify-center disabled:opacity-70"
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
               >
-                Resume Game
+                {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
+                {loading ? 'Logging in...' : 'Resume Game'}
               </motion.button>
             </form>
 
-            {/* Sign Up Link */}
             <div className="mt-6 text-center">
               <span className="text-gray-600 dark:text-gray-400">Don't have an account? </span>
               <button
                 onClick={() => navigate('/signup')}
                 className="text-[#006D77] dark:text-[#06D6A0] font-semibold hover:underline"
+                type="button"
               >
                 Start Your Quest
               </button>

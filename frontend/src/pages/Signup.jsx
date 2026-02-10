@@ -1,46 +1,82 @@
 import { motion } from 'motion/react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Mail, Lock, User, ArrowLeft } from 'lucide-react';
+import { Mail, Lock, User, ArrowLeft, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
 
 export function Signup() {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Navigate to onboarding
-    navigate('/onboarding');
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data, error: signupError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: name,
+          },
+        },
+      });
+
+      if (signupError) throw signupError;
+
+      if (data?.user) {
+        navigate('/onboarding');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGoogleSignup = () => {
-    // Navigate to onboarding (in real app, this would use Google OAuth)
-    navigate('/onboarding');
+  const handleGoogleSignup = async () => {
+    try {
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/onboarding`,
+        },
+      });
+
+      if (oauthError) throw oauthError;
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
     <div className="min-h-screen w-screen bg-gradient-to-br from-[#006D77] via-[#005a63] to-[#004a52] dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 relative overflow-hidden">
-      {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10 pointer-events-none">
-        <div className="absolute inset-0" style={{
-          backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)',
-          backgroundSize: '30px 30px',
-        }} />
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)',
+            backgroundSize: '30px 30px',
+          }}
+        />
       </div>
 
-      {/* Back Button */}
       <motion.button
         onClick={() => navigate('/')}
         className="absolute top-6 left-6 p-3 bg-white/10 dark:bg-gray-800/50 backdrop-blur-sm text-white rounded-lg hover:bg-white/20 dark:hover:bg-gray-700/50 transition-colors z-20"
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
+        type="button"
       >
         <ArrowLeft className="w-5 h-5" />
       </motion.button>
 
-      {/* Content */}
       <div className="relative z-10 w-full px-6 py-12 flex items-center justify-center min-h-screen">
         <motion.div
           className="w-full max-w-md"
@@ -48,9 +84,7 @@ export function Signup() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          {/* Card */}
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 backdrop-blur-sm transition-colors">
-            {/* Header */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 backdrop-blur-sm transition-colors border border-white/10">
             <div className="text-center mb-8">
               <motion.div
                 className="inline-block text-6xl mb-4"
@@ -67,9 +101,15 @@ export function Signup() {
               </p>
             </div>
 
-            {/* Google Signup */}
+            {error && (
+              <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+
             <motion.button
               onClick={handleGoogleSignup}
+              type="button"
               className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-white dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 transition-all mb-6"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -94,7 +134,6 @@ export function Signup() {
               </div>
             </div>
 
-            {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -106,7 +145,7 @@ export function Signup() {
                     id="name"
                     type="text"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(event) => setName(event.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#006D77] dark:focus:ring-[#06D6A0] focus:border-transparent transition-all"
                     placeholder="Alex Scholar"
                     required
@@ -124,7 +163,7 @@ export function Signup() {
                     id="email"
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(event) => setEmail(event.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#006D77] dark:focus:ring-[#06D6A0] focus:border-transparent transition-all"
                     placeholder="alex@university.edu"
                     required
@@ -142,51 +181,32 @@ export function Signup() {
                     id="password"
                     type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(event) => setPassword(event.target.value)}
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#006D77] dark:focus:ring-[#06D6A0] focus:border-transparent transition-all"
                     placeholder="••••••••"
                     required
                   />
                 </div>
-                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  Must be at least 8 characters long
-                </p>
-              </div>
-
-              <div className="flex items-start">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 mt-1 text-[#006D77] dark:text-[#06D6A0] border-gray-300 dark:border-gray-600 rounded focus:ring-[#006D77] dark:focus:ring-[#06D6A0]"
-                  required
-                />
-                <span className="ml-2 text-sm text-gray-600 dark:text-gray-400">
-                  I agree to the{' '}
-                  <button type="button" className="text-[#006D77] dark:text-[#06D6A0] hover:underline">
-                    Terms of Service
-                  </button>
-                  {' '}and{' '}
-                  <button type="button" className="text-[#006D77] dark:text-[#06D6A0] hover:underline">
-                    Privacy Policy
-                  </button>
-                </span>
               </div>
 
               <motion.button
                 type="submit"
-                className="w-full px-6 py-3 bg-[#006D77] dark:bg-[#06D6A0] text-white dark:text-gray-900 font-semibold rounded-lg shadow-lg hover:bg-[#005a63] dark:hover:bg-[#05c295] transition-all"
+                disabled={loading}
+                className="w-full px-6 py-3 bg-[#006D77] dark:bg-[#06D6A0] text-white dark:text-gray-900 font-semibold rounded-lg shadow-lg hover:bg-[#005a63] dark:hover:bg-[#05c295] transition-all flex items-center justify-center disabled:opacity-70"
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
               >
-                Start My Quest
+                {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
+                {loading ? 'Creating Quest...' : 'Start My Quest'}
               </motion.button>
             </form>
 
-            {/* Login Link */}
             <div className="mt-6 text-center">
               <span className="text-gray-600 dark:text-gray-400">Already have an account? </span>
               <button
                 onClick={() => navigate('/login')}
                 className="text-[#006D77] dark:text-[#06D6A0] font-semibold hover:underline"
+                type="button"
               >
                 Resume Game
               </button>

@@ -1,19 +1,63 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Settings, Moon, LogOut, Sun, ChevronUp, Check } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useDarkMode } from '../contexts/DarkModeContext';
+import { toast } from 'sonner';
+import { supabase } from '../lib/supabaseClient';
 
 export function UserDropdown() {
   const [isOpen, setIsOpen] = useState(false);
+  const [displayName, setDisplayName] = useState('');
+  const [roleLabel, setRoleLabel] = useState('Student');
   const { isDarkMode, setDarkMode } = useDarkMode();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    // Here you would implement logout logic
-    console.log('Logging out...');
-    setIsOpen(false);
-    navigate('/login');
+  const initials = useMemo(() => {
+    if (!displayName) return 'U';
+    const parts = displayName.trim().split(/\s+/).slice(0, 2);
+    return parts.map((part) => part[0]).join('').toUpperCase();
+  }, [displayName]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadUser = async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData?.user;
+      if (!user) return;
+
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', user.id)
+        .single();
+
+      if (!isMounted) return;
+
+      if (data?.full_name) {
+        setDisplayName(data.full_name);
+      } else {
+        setDisplayName(user.email?.split('@')[0] || 'User');
+      }
+    };
+
+    loadUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setIsOpen(false);
+      navigate('/login', { replace: true });
+    } catch (err) {
+      toast.error('Unable to sign out. Please try again.');
+    }
   };
 
   const handleNavigate = (path) => {
@@ -34,20 +78,20 @@ export function UserDropdown() {
         }}
       >
         <div className="w-8 h-8 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
-          <span className="text-white font-bold text-xs">RJ</span>
+          <span className="text-white font-bold text-xs">{initials}</span>
         </div>
         <div className="flex-1 text-left">
           <p 
             className="text-sm font-semibold"
             style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
           >
-            Ruthuja
+            {displayName || 'User'}
           </p>
           <p 
             className="text-xs"
             style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
           >
-            Student
+            {roleLabel}
           </p>
         </div>
         <ChevronUp 

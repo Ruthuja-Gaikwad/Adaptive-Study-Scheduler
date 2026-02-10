@@ -1,44 +1,446 @@
-import { motion } from 'motion/react';
-import { ArrowLeft } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  ArrowLeft,
+  Bell,
+  BookOpen,
+  ChevronRight,
+  HardDrive,
+  Lock,
+  LogOut,
+  Mail,
+  Settings as SettingsIcon,
+  Shield,
+  Trash2,
+} from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDarkMode } from '../contexts/DarkModeContext';
+import { supabase } from '../lib/supabaseClient';
+import { toast } from 'sonner';
+
+const categories = [
+  { id: 'general', label: 'General', icon: SettingsIcon },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'security', label: 'Security', icon: Shield },
+];
+
+const listVariants = {
+  hidden: { opacity: 0, x: 40 },
+  show: {
+    opacity: 1,
+    x: 0,
+    transition: { staggerChildren: 0.1 },
+  },
+};
+
+const listItemVariants = {
+  hidden: { opacity: 0, x: 40 },
+  show: { opacity: 1, x: 0 },
+};
 
 export function Settings() {
   const { isDarkMode } = useDarkMode();
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    displayName: 'Alex Scholar',
-    email: 'alex.scholar@university.edu',
-    school: 'State University'
+  const [activeTab, setActiveTab] = useState('general');
+  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [stream, setStream] = useState('');
+  const [preferences, setPreferences] = useState({
+    notificationsEnabled: true,
+    studyGoal: '90 minutes',
   });
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [deleteCountdown, setDeleteCountdown] = useState(0);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    console.log('Saving changes:', formData);
-    alert('Changes saved successfully!');
+  const storagePercent = useMemo(() => {
+    const estimate = Math.min(100, Math.max(15, Math.floor(preferences.studyGoal.length * 6)));
+    return estimate;
+  }, [preferences.studyGoal]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let timeoutId;
+
+    const loadPreferences = async () => {
+      try {
+        setLoading(true);
+        setLoadError('');
+        timeoutId = setTimeout(() => {
+          if (!isMounted) return;
+          setLoadError('Connection timed out. Please try again.');
+          setLoading(false);
+        }, 20000);
+
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+
+        const user = sessionData?.session?.user;
+        if (!user) {
+          navigate('/login', { replace: true });
+          return;
+        }
+
+        if (!isMounted) return;
+        setUserId(user.id);
+        setEmail(user.email || '');
+
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('preferences, stream')
+          .eq('id', user.id)
+          .single();
+
+        if (!isMounted) return;
+
+        if (error) {
+          toast.error('Unable to load preferences.');
+          setLoadError('Unable to load preferences.');
+          return;
+        }
+
+        const prefs = data?.preferences || {};
+        setStream(data?.stream || '');
+        setPreferences((prev) => ({
+          ...prev,
+          notificationsEnabled:
+            typeof prefs.notificationsEnabled === 'boolean'
+              ? prefs.notificationsEnabled
+              : prev.notificationsEnabled,
+          studyGoal: prefs.studyGoal || prev.studyGoal,
+        }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        setLoadError(message);
+      } finally {
+        clearTimeout(timeoutId);
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadPreferences();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
+  }, [navigate, refreshKey]);
+
+  const handleSavePreferences = async () => {
+    if (!userId) return;
+    setSavingPrefs(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ preferences })
+        .eq('id', userId);
+
+      if (error) throw error;
+      toast.success('Preferences saved.');
+    } catch (err) {
+      toast.error('Unable to save preferences.');
+    } finally {
+      setSavingPrefs(false);
+    }
   };
 
-  const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const handlePasswordReset = async () => {
+    if (!email) {
+      toast.error('No email found for this account.');
+      return;
+    }
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (error) throw error;
+      toast.success('Password reset email sent.');
+    } catch (err) {
+      toast.error('Unable to send reset email.');
+    } finally {
+      setResetLoading(false);
+    }
   };
 
-  return (
-    <div 
-      className="min-h-screen transition-colors"
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    await supabase.auth.signOut();
+    navigate('/login', { replace: true });
+  };
+
+  const handleDeleteStart = () => {
+    if (deleteCountdown > 0) return;
+    setDeleteCountdown(3);
+  };
+
+  useEffect(() => {
+    if (deleteCountdown <= 0) return;
+    const timer = setTimeout(() => setDeleteCountdown((prev) => prev - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [deleteCountdown]);
+
+  const handleDeleteAccount = async () => {
+    if (!userId) return;
+    try {
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) throw error;
+      toast.success('Account data deleted.');
+      await supabase.auth.signOut();
+      navigate('/signup', { replace: true });
+    } catch (err) {
+      toast.error('Unable to delete account.');
+    }
+  };
+
+  const ToggleSwitch = ({ checked, onChange }) => (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.92 }}
+      onClick={() => onChange(!checked)}
+      className="relative h-6 w-11 rounded-full transition-colors"
       style={{
-        backgroundColor: isDarkMode ? '#111827' : '#ffffff'
+        backgroundColor: checked ? '#06D6A0' : isDarkMode ? '#374151' : '#e5e7eb',
       }}
     >
-      {/* Header */}
-      <div 
+      <motion.span
+        layout
+        className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow"
+        animate={{ x: checked ? 20 : 2 }}
+        transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      />
+    </motion.button>
+  );
+
+  const TabPanel = ({ tab }) => (
+    <motion.div
+      key={tab}
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: 0.2 }}
+      className="space-y-4"
+    >
+      {tab === 'general' && (
+        <>
+          <div
+            className="rounded-2xl border px-5 py-4"
+            style={{
+              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Settings className="w-5 h-5 text-[#06D6A0]" />
+                <div>
+                  <p className="text-sm text-slate-400">Study Goal</p>
+                  <input
+                    value={preferences.studyGoal}
+                    onChange={(event) =>
+                      setPreferences((prev) => ({ ...prev, studyGoal: event.target.value }))
+                    }
+                    className="mt-1 w-44 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#06D6A0]"
+                    style={{
+                      borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+                      backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc',
+                      color: isDarkMode ? '#f8fafc' : '#0f172a',
+                    }}
+                  />
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-400" />
+            </div>
+          </div>
+
+          <div
+            className="rounded-2xl border px-5 py-4"
+            style={{
+              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <BookOpen className="w-5 h-5 text-[#006D77]" />
+                <div>
+                  <p className="text-sm text-slate-400">Stream</p>
+                  <p className="text-sm font-medium">
+                    {stream || 'Not set'}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-400" />
+            </div>
+          </div>
+
+          <div
+            className="rounded-2xl border px-5 py-4"
+            style={{
+              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <HardDrive className="w-5 h-5 text-[#FFB400]" />
+              <div className="flex-1">
+                <p className="text-sm text-slate-400">Study Data Sync</p>
+                <div className="mt-2 h-2 w-full rounded-full bg-slate-200 dark:bg-slate-700">
+                  <div
+                    className="h-2 rounded-full bg-gradient-to-r from-[#006D77] to-[#06D6A0]"
+                    style={{ width: `${storagePercent}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-slate-400">{storagePercent}% synced</p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === 'notifications' && (
+        <div
+          className="rounded-2xl border px-5 py-4"
+          style={{
+            borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+            backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Bell className="w-5 h-5 text-[#06D6A0]" />
+              <div>
+                <p className="text-sm font-medium">Notifications</p>
+                <p className="text-xs text-slate-400">Remind me about study streaks</p>
+              </div>
+            </div>
+            <ToggleSwitch
+              checked={preferences.notificationsEnabled}
+              onChange={(value) =>
+                setPreferences((prev) => ({ ...prev, notificationsEnabled: value }))
+              }
+            />
+          </div>
+        </div>
+      )}
+
+      {tab === 'security' && (
+        <div className="space-y-4">
+          <div
+            className="rounded-2xl border px-5 py-4"
+            style={{
+              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Mail className="w-5 h-5 text-[#06D6A0]" />
+                <div>
+                  <p className="text-sm font-medium">Password Reset</p>
+                  <p className="text-xs text-slate-400">Send reset link to {email || 'your email'}</p>
+                </div>
+              </div>
+              <motion.button
+                type="button"
+                whileTap={{ scale: 0.95 }}
+                onClick={handlePasswordReset}
+                className="px-4 py-2 rounded-lg bg-[#006D77] text-white text-sm"
+              >
+                {resetLoading ? 'Sending...' : 'Send Link'}
+              </motion.button>
+            </div>
+          </div>
+
+          <div
+            className="rounded-2xl border px-5 py-4"
+            style={{
+              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+            }}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Lock className="w-5 h-5 text-[#FFB400]" />
+                <div>
+                  <p className="text-sm font-medium">Sign out everywhere</p>
+                  <p className="text-xs text-slate-400">End this session cleanly</p>
+                </div>
+              </div>
+              <motion.button
+                type="button"
+                whileTap={{ scale: 0.95 }}
+                onClick={handleLogout}
+                className="px-4 py-2 rounded-lg bg-slate-800 text-slate-100 text-sm"
+                animate={loggingOut ? { opacity: 0.7 } : { opacity: 1 }}
+              >
+                <span className="flex items-center gap-2">
+                  <LogOut className="w-4 h-4" />
+                  {loggingOut ? 'Signing out...' : 'Sign Out'}
+                </span>
+              </motion.button>
+            </div>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+
+  if (loading) {
+    return (
+      <div
+        className="min-h-screen w-full flex items-center justify-center"
+        style={{ backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }}
+      >
+        <div className="flex flex-col items-center gap-3 text-slate-400">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
+            className="h-8 w-8 rounded-full border-2 border-[#06D6A0] border-t-transparent"
+          />
+          <p className="text-sm">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div
+        className="min-h-screen w-full flex flex-col items-center justify-center gap-4"
+        style={{ backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }}
+      >
+        <p className="text-sm text-rose-400">{loadError}</p>
+        <motion.button
+          type="button"
+          whileTap={{ scale: 0.95 }}
+          onClick={() => setRefreshKey((prev) => prev + 1)}
+          className="px-5 py-2 rounded-lg bg-[#006D77] text-white text-sm"
+        >
+          Try Again
+        </motion.button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="min-h-screen transition-colors"
+      style={{ backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc' }}
+    >
+      <div
         className="border-b sticky top-0 z-10 transition-colors"
         style={{
-          borderColor: isDarkMode ? '#374151' : '#e5e7eb',
-          backgroundColor: isDarkMode ? '#1f2937' : '#ffffff'
+          borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+          backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
         }}
       >
-        <div className="max-w-2xl mx-auto px-6 py-6">
+        <div className="max-w-5xl mx-auto px-6 py-6">
           <div className="flex items-center gap-4">
             <motion.button
               onClick={() => navigate(-1)}
@@ -46,117 +448,127 @@ export function Settings() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               style={{
-                backgroundColor: isDarkMode ? '#374151' : '#f3f4f6',
-                color: isDarkMode ? '#9ca3af' : '#6b7280'
+                backgroundColor: isDarkMode ? '#1f2937' : '#f1f5f9',
+                color: isDarkMode ? '#cbd5f5' : '#475569',
               }}
+              type="button"
             >
               <ArrowLeft className="w-5 h-5" />
             </motion.button>
-            <h1 
-              className="text-3xl font-bold"
-              style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
-            >
-              Account Settings
-            </h1>
+            <div>
+              <h1 className="text-3xl font-bold" style={{ color: isDarkMode ? '#f8fafc' : '#0f172a' }}>
+                System Core
+              </h1>
+              <p className="text-sm text-slate-400">Settings Hub</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Form Content */}
-      <div className="max-w-2xl mx-auto px-6 py-12">
-        <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Display Name */}
-          <div className="space-y-2">
-            <label 
-              htmlFor="displayName" 
-              className="block text-sm font-medium"
-              style={{ color: isDarkMode ? '#d1d5db' : '#6b7280' }}
-            >
-              Display Name
-            </label>
-            <input
-              id="displayName"
-              type="text"
-              value={formData.displayName}
-              onChange={(e) => handleChange('displayName', e.target.value)}
-              className="w-full px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
-              placeholder="Enter your display name"
-              style={{
-                borderColor: isDarkMode ? '#4b5563' : '#d1d5db',
-                borderWidth: '1px',
-                backgroundColor: isDarkMode ? '#374151' : '#ffffff',
-                color: isDarkMode ? '#f9fafb' : '#111827',
-                focusOutlineColor: isDarkMode ? '#06D6A0' : '#006D77'
-              }}
-            />
-          </div>
+      <div className="max-w-5xl mx-auto px-6 py-10 grid gap-8 md:grid-cols-[260px_1fr]">
+        <motion.div
+          variants={listVariants}
+          initial="hidden"
+          animate="show"
+          className="space-y-3"
+        >
+          {categories.map((category) => {
+            const Icon = category.icon;
+            return (
+              <motion.button
+                key={category.id}
+                variants={listItemVariants}
+                onClick={() => setActiveTab(category.id)}
+                className="w-full flex items-center justify-between rounded-2xl border px-4 py-3 text-left"
+                style={{
+                  borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+                  backgroundColor:
+                    activeTab === category.id
+                      ? isDarkMode
+                        ? '#111827'
+                        : '#ffffff'
+                      : isDarkMode
+                      ? '#0b1220'
+                      : '#f1f5f9',
+                  color: isDarkMode ? '#f8fafc' : '#0f172a',
+                }}
+                type="button"
+              >
+                <span className="flex items-center gap-3">
+                  <Icon className="w-5 h-5 text-[#06D6A0]" />
+                  {category.label}
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-400" />
+              </motion.button>
+            );
+          })}
+        </motion.div>
 
-          {/* Email Address */}
-          <div className="space-y-2">
-            <label 
-              htmlFor="email" 
-              className="block text-sm font-medium"
-              style={{ color: isDarkMode ? '#d1d5db' : '#6b7280' }}
-            >
-              Email Address
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={formData.email}
-              onChange={(e) => handleChange('email', e.target.value)}
-              className="w-full px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
-              placeholder="Enter your email address"
-              style={{
-                borderColor: isDarkMode ? '#4b5563' : '#d1d5db',
-                borderWidth: '1px',
-                backgroundColor: isDarkMode ? '#374151' : '#ffffff',
-                color: isDarkMode ? '#f9fafb' : '#111827'
-              }}
-            />
-          </div>
+        <div className="space-y-6">
+          <AnimatePresence mode="wait">
+            <TabPanel tab={activeTab} />
+          </AnimatePresence>
 
-          {/* University/School */}
-          <div className="space-y-2">
-            <label 
-              htmlFor="school" 
-              className="block text-sm font-medium"
-              style={{ color: isDarkMode ? '#d1d5db' : '#6b7280' }}
-            >
-              University/School
-            </label>
-            <input
-              id="school"
-              type="text"
-              value={formData.school}
-              onChange={(e) => handleChange('school', e.target.value)}
-              className="w-full px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:border-transparent transition-shadow"
-              placeholder="Enter your university or school"
-              style={{
-                borderColor: isDarkMode ? '#4b5563' : '#d1d5db',
-                borderWidth: '1px',
-                backgroundColor: isDarkMode ? '#374151' : '#ffffff',
-                color: isDarkMode ? '#f9fafb' : '#111827'
-              }}
-            />
-          </div>
-
-          {/* Save Button */}
-          <div className="pt-4">
+          <div className="flex items-center justify-between">
             <motion.button
-              type="submit"
-              className="w-full px-6 py-3 font-medium rounded-lg shadow-md transition-colors"
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
+              type="button"
+              onClick={handleSavePreferences}
+              whileTap={{ scale: 0.97 }}
+              className="px-5 py-2 rounded-lg bg-[#06D6A0] text-[#0f172a] text-sm font-semibold"
+            >
+              {savingPrefs ? 'Saving...' : 'Save Preferences'}
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={handleLogout}
+              whileTap={{ scale: 0.97 }}
+              className="px-4 py-2 rounded-lg border border-slate-300 text-sm"
               style={{
-                backgroundColor: isDarkMode ? '#06D6A0' : '#006D77',
-                color: isDarkMode ? '#1f2937' : '#ffffff'
+                borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+                color: isDarkMode ? '#f8fafc' : '#0f172a',
               }}
             >
-              Save Changes
+              Quick Sign Out
             </motion.button>
           </div>
-        </form>
+
+          <div
+            className="rounded-2xl border px-5 py-4"
+            style={{
+              borderColor: '#dc2626',
+              backgroundColor: isDarkMode ? '#1f0f12' : '#fff1f2',
+            }}
+          >
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3">
+                <Trash2 className="w-5 h-5 text-rose-500" />
+                <div>
+                  <p className="text-sm font-semibold text-rose-500">Danger Zone</p>
+                  <p className="text-xs text-rose-400">Delete account data after a confirmation delay.</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <motion.button
+                  type="button"
+                  onClick={handleDeleteStart}
+                  whileTap={{ scale: 0.95 }}
+                  className="px-4 py-2 rounded-lg border border-rose-400 text-rose-500 text-sm"
+                >
+                  {deleteCountdown > 0 ? `Confirming... ${deleteCountdown}` : 'Delete Account'}
+                </motion.button>
+                <motion.button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  whileTap={{ scale: 0.95 }}
+                  disabled={deleteCountdown > 0}
+                  className="px-4 py-2 rounded-lg bg-rose-500 text-white text-sm disabled:opacity-60"
+                >
+                  Confirm Delete
+                </motion.button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

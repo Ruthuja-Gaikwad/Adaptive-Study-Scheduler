@@ -1,9 +1,64 @@
-import { Outlet } from 'react-router';
+import { useEffect } from 'react';
+import { Outlet, useNavigate } from 'react-router';
 import { SidebarTrigger } from './ui/sidebar';
 import { AppSidebar } from './AppSidebar';
 import { motion } from 'motion/react';
+import { supabase } from '../lib/supabaseClient';
 
 export function RootLayout() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const ensureSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!isMounted) return;
+      if (!data?.session) {
+        navigate('/login', { replace: true });
+        return;
+      }
+
+      const { data: profileData, error } = await supabase
+        .from('profiles')
+        .select('onboarding_completed')
+        .eq('id', data.session.user.id)
+        .single();
+
+      if (!isMounted) return;
+
+      if (error || !profileData?.onboarding_completed) {
+        navigate('/onboarding', { replace: true });
+      }
+    };
+
+    ensureSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (!session) {
+          navigate('/login', { replace: true });
+          return;
+        }
+
+        const { data: profileData, error } = await supabase
+          .from('profiles')
+          .select('onboarding_completed')
+          .eq('id', session.user.id)
+          .single();
+
+        if (error || !profileData?.onboarding_completed) {
+          navigate('/onboarding', { replace: true });
+        }
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
+  }, [navigate]);
+
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] text-[#334155] transition-colors dark:bg-[#0F172A] dark:text-slate-100">
       {/* Sidebar with menu items */}

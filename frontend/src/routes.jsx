@@ -1,6 +1,6 @@
 import { createBrowserRouter } from 'react-router';
 import { RootLayout } from './components/RootLayout.jsx';
-import { Dashboard } from './components/Dashboard.jsx';
+import Dashboard from './pages/Dashboard.jsx';
 import { GPSView } from './components/GPSView.jsx';
 import { Quests } from './components/Quests.jsx';
 import { StudySquad } from './components/StudySquad.jsx';
