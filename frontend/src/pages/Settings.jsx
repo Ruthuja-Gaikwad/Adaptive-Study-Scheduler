@@ -18,6 +18,9 @@ import { useDarkMode } from '../contexts/DarkModeContext';
 import { supabase } from '../lib/supabaseClient';
 import { toast } from 'sonner';
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const categories = [
   { id: 'general', label: 'General', icon: SettingsIcon },
   { id: 'notifications', label: 'Notifications', icon: Bell },
@@ -64,41 +67,52 @@ export function Settings() {
 
   useEffect(() => {
     let isMounted = true;
-    let timeoutId;
 
-    const loadPreferences = async () => {
+    const loadPreferences = async (user) => {
       try {
         setLoading(true);
         setLoadError('');
-        timeoutId = setTimeout(() => {
-          if (!isMounted) return;
-          setLoadError('Connection timed out. Please try again.');
-          setLoading(false);
-        }, 20000);
-
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-        if (sessionError) throw sessionError;
-
-        const user = sessionData?.session?.user;
-        if (!user) {
-          navigate('/login', { replace: true });
-          return;
-        }
 
         if (!isMounted) return;
         setUserId(user.id);
         setEmail(user.email || '');
 
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('preferences, stream')
-          .eq('id', user.id)
-          .single();
+        // Get token from localStorage
+        let token = null;
+        const authTokenKey = Object.keys(localStorage).find(k => k.includes('auth-token') && !k.includes('verifier'));
+        if (authTokenKey) {
+          const tokenStr = localStorage.getItem(authTokenKey);
+          if (tokenStr) {
+            const parsed = JSON.parse(tokenStr);
+            token = parsed?.access_token;
+          }
+        }
+
+        if (!token) {
+          throw new Error('No access token available');
+        }
+
+        // Use direct REST API instead of SDK
+        const url = `${SUPABASE_URL}/rest/v1/profiles?id=eq.${user.id}&select=preferences,stream`;
+        const response = await fetch(url, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          toast.error('Unable to load preferences.');
+          setLoadError('Unable to load preferences.');
+          return;
+        }
+
+        const result = await response.json();
+        const data = Array.isArray(result) && result.length > 0 ? result[0] : null;
 
         if (!isMounted) return;
 
-        if (error) {
+        if (!data) {
           toast.error('Unable to load preferences.');
           setLoadError('Unable to load preferences.');
           return;
@@ -118,16 +132,46 @@ export function Settings() {
         const message = err instanceof Error ? err.message : 'Unknown error';
         setLoadError(message);
       } finally {
-        clearTimeout(timeoutId);
         if (isMounted) setLoading(false);
       }
     };
 
-    loadPreferences();
+    // Check localStorage first for immediate load
+    const checkSession = () => {
+      const authTokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
+      if (authTokenKey) {
+        const tokenStr = localStorage.getItem(authTokenKey);
+        if (tokenStr) {
+          try {
+            const parsed = JSON.parse(tokenStr);
+            if (parsed?.user && isMounted) {
+              loadPreferences(parsed.user);
+              return true; // Session found
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+      return false; // No session in localStorage
+    };
+
+    const hasSession = checkSession();
+
+    // Use auth state change listener as fallback
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user && isMounted) {
+          loadPreferences(session.user);
+        } else if (event === 'SIGNED_OUT' && isMounted) {
+          navigate('/login', { replace: true });
+        }
+      }
+    );
 
     return () => {
       isMounted = false;
-      clearTimeout(timeoutId);
+      subscription?.unsubscribe();
     };
   }, [navigate, refreshKey]);
 

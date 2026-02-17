@@ -6,6 +6,9 @@ import { toast } from 'sonner';
 import { supabase } from '../lib/supabaseClient';
 import { useDarkMode } from '../contexts/DarkModeContext';
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
 const CBSE_SYLLABUS = {
   6: [
     'Mathematics',
@@ -114,55 +117,115 @@ export function Profile() {
 
   useEffect(() => {
     let isMounted = true;
-    let timeoutId;
 
-    const loadProfile = async () => {
+    const loadProfile = async (user) => {
+      console.log('[PROFILE] Loading profile for user:', user.id);
       try {
-        timeoutId = setTimeout(() => {
-          if (!isMounted) return;
-          toast.error('Connection timed out. Please try again.');
-          setLoading(false);
-        }, 20000);
-
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
-
-        const user = sessionData?.session?.user;
-
-        if (!user) {
-          navigate('/login', { replace: true });
-          return;
+        // Get token from localStorage
+        let token = null;
+        const authTokenKey = Object.keys(localStorage).find(k => k.includes('auth-token') && !k.includes('verifier'));
+        if (authTokenKey) {
+          const tokenStr = localStorage.getItem(authTokenKey);
+          if (tokenStr) {
+            const parsed = JSON.parse(tokenStr);
+            token = parsed?.access_token;
+          }
         }
 
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('full_name, grade_level, interests, xp, stream')
-          .eq('id', user.id)
-          .single();
+        if (!token) {
+          throw new Error('No access token available');
+        }
 
-        if (error) throw error;
+        // Use direct REST API instead of SDK
+        const url = `${SUPABASE_URL}/rest/v1/profiles?id=eq.${user.id}&select=full_name,grade_level,interests,xp,stream`;
+        const response = await fetch(url, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to load profile: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const profileData = Array.isArray(data) && data.length > 0 ? data[0] : null;
+
+        if (!profileData) {
+          throw new Error('Profile not found');
+        }
 
         if (!isMounted) return;
+        console.log('[PROFILE] ✅ Profile loaded:', profileData);
         setProfile({
-          full_name: data?.full_name || '',
-          grade_level: data?.grade_level || 10,
-          stream: data?.stream || '',
-          interests: data?.interests || [],
-          xp: data?.xp || 0,
+          full_name: profileData?.full_name || '',
+          grade_level: profileData?.grade_level || 10,
+          stream: profileData?.stream || '',
+          interests: profileData?.interests || [],
+          xp: profileData?.xp || 0,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unable to load profile.';
+        console.error('[PROFILE] ❌ Error:', message);
         toast.error(message);
       } finally {
-        clearTimeout(timeoutId);
-        if (isMounted) setLoading(false);
+        if (isMounted) {
+          console.log('[PROFILE] Setting loading to false');
+          setLoading(false);
+        }
       }
     };
 
-    loadProfile();
+    // Check localStorage first for immediate load
+    const checkSession = () => {
+      console.log('[PROFILE] Checking localStorage for session...');
+      const authTokenKey = Object.keys(localStorage).find(k => k.includes('auth-token') && !k.includes('verifier'));
+      if (authTokenKey) {
+        const tokenStr = localStorage.getItem(authTokenKey);
+        if (tokenStr) {
+          try {
+            const parsed = JSON.parse(tokenStr);
+            console.log('[PROFILE] Parsed auth-token:', parsed);
+            if (parsed?.user && isMounted) {
+              console.log('[PROFILE] ✓ User found in localStorage, loading profile...');
+              loadProfile(parsed.user);
+              return true; // Session found
+            } else {
+              console.log('[PROFILE] No user in parsed token, checking for session structure...');
+              // Try accessing session.user
+              if (parsed?.session?.user && isMounted) {
+                console.log('[PROFILE] ✓ User found in session, loading profile...');
+                loadProfile(parsed.session.user);
+                return true;
+              }
+            }
+          } catch (e) {
+            console.warn('[PROFILE] Failed to parse token:', e.message);
+          }
+        }
+      }
+      console.log('[PROFILE] No session in localStorage, will wait for auth event');
+      return false; // No session in localStorage
+    };
+
+    checkSession();
+
+    // Use auth state change listener as fallback
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        console.log('[PROFILE] Auth event:', event, session?.user ? '✓ user' : '✗ no user');
+        if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user && isMounted) {
+          loadProfile(session.user);
+        } else if (event === 'SIGNED_OUT' && isMounted) {
+          navigate('/login', { replace: true });
+        }
+      }
+    );
+
     return () => {
       isMounted = false;
-      clearTimeout(timeoutId);
+      subscription?.unsubscribe();
     };
   }, [navigate]);
 

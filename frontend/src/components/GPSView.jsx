@@ -1,25 +1,146 @@
 import { motion } from 'motion/react';
-import { CheckCircle2, Circle, XCircle, Navigation } from 'lucide-react';
+import { CheckCircle2, Circle, XCircle, Navigation, Loader2, Zap, Star } from 'lucide-react';
 import { useDarkMode } from '../contexts/DarkModeContext';
+import { supabase } from '../lib/supabaseClient';
+import { toast } from 'sonner';
+import { useEffect, useState } from 'react';
+import { useSessionBootstrap } from '../contexts/SessionBootstrapContext';
+import { N8N_WEBHOOK_URL } from '../config/webhooks';
 
-export function GPSView() {
+export function GPSView({ onRerouteComplete }) {
   const { isDarkMode } = useDarkMode();
-  const timelineNodes = [
-    { id: '1', title: 'Math Chapter 1', date: 'Feb 1', time: '9:00 AM', status: 'completed', subject: 'Math', xp: 100 },
-    { id: '2', title: 'Physics Lab Report', date: 'Feb 1', time: '2:00 PM', status: 'completed', subject: 'Physics', xp: 150 },
-    { id: '3', title: 'Chemistry Quiz Prep', date: 'Feb 2', time: '10:00 AM', status: 'completed', subject: 'Chemistry', xp: 75 },
-    { id: '4', title: 'Biology Reading', date: 'Feb 2', time: '4:00 PM', status: 'missed', subject: 'Biology', xp: 50 },
-    { id: '5', title: 'Math Problem Set', date: 'Feb 3', time: '11:00 AM', status: 'active', subject: 'Math', xp: 100 },
-    { id: '6', title: 'Biology Reading (Rescheduled)', date: 'Feb 3', time: '3:00 PM', status: 'rescheduled', subject: 'Biology', xp: 50 },
-    { id: '7', title: 'Physics Chapter 4', date: 'Feb 3', time: '7:00 PM', status: 'upcoming', subject: 'Physics', xp: 150 },
-    { id: '8', title: 'Chemistry Lab', date: 'Feb 4', time: '9:00 AM', status: 'upcoming', subject: 'Chemistry', xp: 200 },
-  ];
+  const { sessionUser, isSessionLoading } = useSessionBootstrap();
+  const [isRerouting, setIsRerouting] = useState(false);
+  const [timelineNodes, setTimelineNodes] = useState([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
+  
+  const refreshTasks = async (userId) => {
+    console.log('[REROUTE] Refreshing tasks for user:', userId);
+    try {
+      setIsLoadingTasks(true);
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id,title,subject,status,scheduled_at,xp_reward,reroute_reason')
+        .eq('student_id', userId)
+        .order('scheduled_at', { ascending: true });
+
+      if (error) {
+        console.error('[REROUTE] Failed to refresh tasks:', error.message);
+        return;
+      }
+
+      const tasks = Array.isArray(data) ? data : [];
+      setTimelineNodes(tasks);
+      console.log('[REROUTE] ✅ UI Updated with', tasks?.length, 'live tasks');
+    } catch (err) {
+      console.error('[REROUTE] Error refreshing tasks:', err);
+    } finally {
+      setIsLoadingTasks(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isSessionLoading) return;
+    if (!sessionUser) {
+      setTimelineNodes([]);
+      setIsLoadingTasks(false);
+      return;
+    }
+
+    refreshTasks(sessionUser.id);
+  }, [isSessionLoading, sessionUser]);
+
+  useEffect(() => {
+    if (isSessionLoading || !sessionUser?.id) return;
+
+    const channel = supabase
+      .channel(`tasks-live-${sessionUser.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tasks',
+          filter: `student_id=eq.${sessionUser.id}`,
+        },
+        () => {
+          refreshTasks(sessionUser.id);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isSessionLoading, sessionUser]);
+  
+  const handleActivateRerouting = async () => {
+    setIsRerouting(true);
+    try {
+      let userId = sessionUser?.id || null;
+
+      if (!userId) {
+        const { data } = await supabase.auth.getSession();
+        userId = data?.session?.user?.id;
+      }
+
+      if (!userId) {
+        toast.error('Unable to get user ID. Please log in again.');
+        setIsRerouting(false);
+        return;
+      }
+
+      console.log('[REROUTE] Initiating manual reroute for user:', userId);
+
+      const webhookUrl = N8N_WEBHOOK_URL;
+      if (!webhookUrl || webhookUrl.includes('[PASTE_YOUR_ONE_WEBHOOK_URL]')) {
+        toast.error('Webhook URL not configured');
+        console.error('[REROUTE] N8N_WEBHOOK_URL not set');
+        setIsRerouting(false);
+        return;
+      }
+
+      // Send reroute request to n8n
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          student_id: userId,
+          action: 'reroute',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Webhook error: ${response.status}`);
+      }
+
+      console.log('[REROUTE] ✅ Reroute triggered successfully');
+      toast.success('Rerouting activated! Your schedule is being optimized...');
+
+      // Refresh tasks to show updated schedule
+      await refreshTasks(userId);
+
+      // Call callback if provided
+      if (onRerouteComplete) {
+        onRerouteComplete();
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[REROUTE] ❌ Error:', message);
+      toast.error(`Rerouting failed: ${message}`);
+    } finally {
+      setIsRerouting(false);
+    }
+  };
 
   return (
     <div className="h-full overflow-auto">
       {/* Header */}
       <div 
-        className="border-b px-8 py-6 transition-colors"
+        className="border-b px-4 py-6 transition-colors md:px-8"
         style={{
           backgroundColor: isDarkMode ? '#1f2937' : '#ffffff',
           borderColor: isDarkMode ? '#374151' : '#e5e7eb'
@@ -35,13 +156,13 @@ export function GPSView() {
               className="text-3xl font-bold"
               style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
             >
-              Your Learning Path
+              Quest GPS
             </h2>
             <p 
               className="mt-1"
               style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
             >
-              Adaptive scheduling with intelligent rerouting
+              Adaptive quest routing with intelligent reroutes
             </p>
           </div>
         </div>
@@ -49,17 +170,12 @@ export function GPSView() {
 
       {/* Timeline Visualization */}
       <div 
-        className="p-8"
+        className="px-4 py-8 md:px-8"
         style={{ backgroundColor: isDarkMode ? '#111827' : '#ffffff' }}
       >
         <div className="max-w-5xl mx-auto">
           {/* Legend */}
-          <div 
-            className="rounded-xl shadow-md p-6 mb-8 transition-colors"
-            style={{
-              backgroundColor: isDarkMode ? '#1f2937' : '#ffffff'
-            }}
-          >
+          <div className="rounded-2xl shadow-xl p-6 mb-8 transition-colors bg-white/70 dark:bg-slate-900/60 backdrop-blur-xl border border-white/30 dark:border-slate-700/60">
             <h3 
               className="font-semibold mb-4"
               style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
@@ -99,87 +215,123 @@ export function GPSView() {
             </div>
           </div>
 
-          {/* The WOW Factor - Reroute Explanation */}
+          {/* Activate Rerouting Button */}
           <motion.div
-            className="border-l-4 border-[#FFB400] rounded-lg p-6 mb-8"
-            style={{
-              background: isDarkMode 
-                ? 'linear-gradient(to right, rgba(255, 180, 0, 0.2), rgba(255, 180, 0, 0.1))'
-                : 'linear-gradient(to right, rgba(255, 180, 0, 0.1), rgba(255, 180, 0, 0.05))'
-            }}
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.3 }}
+            className="mb-8 w-full mx-2 sm:mx-0"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
           >
-            <h3 
-              className="font-semibold text-lg mb-2 flex items-center gap-2"
-              style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
+            <button
+              onClick={handleActivateRerouting}
+              disabled={isRerouting}
+              className="w-full px-6 py-3 rounded-xl font-semibold text-white transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-not-allowed hover:shadow-lg"
+              style={{
+                backgroundColor: isRerouting 
+                  ? isDarkMode ? '#6b7280' : '#9ca3af'
+                  : isDarkMode ? '#06D6A0' : '#006D77',
+              }}
             >
-              <span className="text-2xl">✨</span>
-              Adaptive Rerouting Activated!
-            </h3>
-            <p 
-              style={{ color: isDarkMode ? '#d1d5db' : '#6b7280' }}
-            >
-              We detected you missed "Biology Reading" yesterday. No worries! We've automatically rescheduled 
-              it to today at 3:00 PM, fitting perfectly into your free slot. Stay on track without the stress!
-            </p>
+              {isRerouting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Consulting the Oracle...</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="w-5 h-5" />
+                  <span>Activate Rerouting</span>
+                </>
+              )}
+            </button>
           </motion.div>
 
-          {/* Metro-style Timeline */}
-          <div 
-            className="rounded-xl shadow-md p-8 transition-colors"
-            style={{
-              backgroundColor: isDarkMode ? '#1f2937' : '#ffffff'
-            }}
-          >
-            <div className="relative">
-              {timelineNodes.map((node, index) => {
-                const nextNode = timelineNodes[index + 1];
-                const isReroute = node.status === 'rescheduled';
-                const prevNodeMissed = index > 0 && timelineNodes[index - 1].status === 'missed';
+          {(() => {
+            if (!timelineNodes.length) return null;
+            const latestTask = [...timelineNodes]
+              .filter((task) => task?.scheduled_at)
+              .sort((a, b) => new Date(b.scheduled_at) - new Date(a.scheduled_at))[0];
+            const rerouteReason = latestTask?.reroute_reason;
+            if (!latestTask || latestTask.status !== 'rerouted' || !rerouteReason) return null;
 
-                return (
-                  <div key={node.id} className="relative">
-                    <TimelineNodeComponent 
-                      node={node} 
-                      isReroute={isReroute}
-                      prevNodeMissed={prevNodeMissed}
-                      isDarkMode={isDarkMode}
-                    />
-                    
-                    {/* Connection Line */}
-                    {nextNode && (
-                      <div className="relative ml-12 h-12">
-                        {isReroute ? (
-                          // Dashed amber reroute line
-                          <svg 
-                            className="absolute left-0 top-0 w-full h-full" 
-                            style={{ overflow: 'visible' }}
-                          >
-                            <path
-                              d="M 0 0 Q 20 24, 0 48"
-                              stroke="#FFB400"
-                              strokeWidth="3"
-                              strokeDasharray="8 4"
-                              fill="none"
-                            />
-                          </svg>
-                        ) : node.status === 'missed' ? (
-                          // Gray line for missed
-                          <div className="absolute left-0 top-0 w-1 h-full bg-gray-300" />
-                        ) : (
-                          // Normal line
-                          <div className={`absolute left-0 top-0 w-1 h-full ${
-                            node.status === 'completed' ? 'bg-[#06D6A0]' : 'bg-gray-300'
-                          }`} />
-                        )}
-                      </div>
-                    )}
+            return (
+              <motion.div
+                className="border-l-4 border-[#FFB400] rounded-2xl p-6 mb-8 w-full mx-2 sm:mx-0 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl shadow-xl"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.35, ease: 'easeOut' }}
+              >
+                <p
+                  className="text-sm sm:text-base"
+                  style={{
+                    color: isDarkMode ? '#d1d5db' : '#6b7280',
+                    fontFamily: "'Noto Sans Devanagari', 'Noto Sans', sans-serif",
+                  }}
+                >
+                  {rerouteReason}
+                </p>
+              </motion.div>
+            );
+          })()}
+
+          {/* Metro-style Timeline */}
+          <div className="rounded-2xl px-4 py-8 transition-colors md:px-8 bg-white/70 dark:bg-slate-900/60 backdrop-blur-xl shadow-2xl">
+            {isLoadingTasks ? (
+              <QuestLogSkeleton />
+            ) : (
+              <div className="relative">
+                {timelineNodes.map((node, index) => {
+                  const nextNode = timelineNodes[index + 1];
+                  const isReroute = node.status === 'rerouted' || node.status === 'rescheduled';
+                  const prevNodeMissed = index > 0 && timelineNodes[index - 1].status === 'missed';
+
+                  return (
+                    <div key={node.id} className="relative">
+                      <TimelineNodeComponent 
+                        node={node} 
+                        isReroute={isReroute}
+                        prevNodeMissed={prevNodeMissed}
+                        isDarkMode={isDarkMode}
+                      />
+                      
+                      {/* Connection Line */}
+                      {nextNode && (
+                        <div className="relative ml-12 h-12">
+                          {isReroute ? (
+                            // Dashed amber reroute line
+                            <svg 
+                              className="absolute left-0 top-0 w-full h-full" 
+                              style={{ overflow: 'visible' }}
+                            >
+                              <path
+                                d="M 0 0 Q 20 24, 0 48"
+                                stroke="#FFB400"
+                                strokeWidth="3"
+                                strokeDasharray="8 4"
+                                fill="none"
+                              />
+                            </svg>
+                          ) : node.status === 'missed' ? (
+                            // Gray line for missed
+                            <div className="absolute left-0 top-0 w-1 h-full bg-gray-300/70" />
+                          ) : (
+                            // Normal line
+                            <div className={`absolute left-0 top-0 w-1 h-full ${
+                              node.status === 'completed' ? 'bg-[#06D6A0]' : 'bg-gray-300/70'
+                            }`} />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {!timelineNodes.length && (
+                  <div className="rounded-2xl border border-dashed border-slate-300/70 px-6 py-10 text-center text-sm text-slate-500 dark:border-slate-600/60 dark:text-slate-300">
+                    No quests scheduled yet. Check back after your next reroute.
                   </div>
-                );
-              })}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -193,6 +345,16 @@ function TimelineNodeComponent({
   prevNodeMissed,
   isDarkMode
 }) {
+  const scheduledAt = node?.scheduled_at ? new Date(node.scheduled_at) : null;
+  const formattedDate = scheduledAt
+    ? scheduledAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : 'TBD';
+  const formattedTime = scheduledAt
+    ? scheduledAt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : 'TBD';
+  const xpReward = Number.isFinite(node?.xp_reward) ? node.xp_reward : null;
+  const isActive = node.status === 'active';
+
   return (
     <motion.div
       className="flex items-start gap-4 pb-4"
@@ -224,20 +386,26 @@ function TimelineNodeComponent({
           <XCircle className="w-10 h-10 text-[#EF476F]" />
         )}
         {node.status === 'rescheduled' && (
-          <div className="w-10 h-10 rounded-full border-4 border-[#FFB400] bg-white flex items-center justify-center">
-            <span className="text-lg">🔄</span>
+          <div className="w-10 h-10 rounded-full border-4 border-[#FFB400] bg-white flex items-center justify-center shadow-[0_0_16px_rgba(255,180,0,0.45)] animate-pulse">
+            <span className="text-lg">↻</span>
+          </div>
+        )}
+        {node.status === 'rerouted' && (
+          <div className="w-10 h-10 rounded-full border-4 border-[#FFB400] bg-white flex items-center justify-center shadow-[0_0_16px_rgba(255,180,0,0.45)] animate-pulse">
+            <span className="text-lg">↻</span>
           </div>
         )}
       </div>
 
       {/* Node Content */}
-      <div 
-        className="flex-1 rounded-lg p-4 relative transition-colors"
-        style={{
-          backgroundColor: isReroute 
-            ? (isDarkMode ? 'rgba(120, 53, 15, 0.2)' : '#FFF8E1')
-            : (isDarkMode ? '#374151' : '#f3f4f6')
-        }}
+      <motion.div 
+        className={`flex-1 rounded-2xl p-4 relative transition-colors backdrop-blur-xl border shadow-[0_0_18px_rgba(15,23,42,0.12)] ${
+          isReroute
+            ? 'border-[#FFB400]/60 shadow-[0_0_20px_rgba(255,180,0,0.35)]'
+            : 'border-white/30 dark:border-slate-700/60'
+        } bg-white/60 dark:bg-slate-900/60`}
+        animate={isActive ? { scale: [1, 1.015, 1], boxShadow: ['0 0 0 rgba(6,214,160,0)', '0 0 18px rgba(6,214,160,0.35)', '0 0 0 rgba(6,214,160,0)'] } : undefined}
+        transition={isActive ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' } : undefined}
       >
         {isReroute && (
           <div 
@@ -251,7 +419,7 @@ function TimelineNodeComponent({
           </div>
         )}
         
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="flex-1">
             <h4 
               className="font-semibold text-lg"
@@ -259,12 +427,25 @@ function TimelineNodeComponent({
             >
               {node.title}
             </h4>
-            <div className="flex items-center gap-3 mt-2">
+            {xpReward !== null && (
+              <div 
+                className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold md:hidden"
+                style={{
+                  backgroundColor: isDarkMode ? 'rgba(255, 180, 0, 0.2)' : 'rgba(255, 180, 0, 0.15)',
+                  color: '#FFB400',
+                  border: '1px solid rgba(255, 180, 0, 0.35)'
+                }}
+              >
+                <Star className="h-4 w-4" />
+                +{xpReward} XP
+              </div>
+            )}
+            <div className="mt-3 flex w-full flex-wrap items-center gap-3 md:mt-2 md:w-auto">
               <span 
                 className="text-sm"
                 style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
               >
-                {node.date}
+                {formattedDate}
               </span>
               <span 
                 className="text-sm"
@@ -276,7 +457,7 @@ function TimelineNodeComponent({
                 className="text-sm"
                 style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
               >
-                {node.time}
+                {formattedTime}
               </span>
               {node.subject && (
                 <>
@@ -302,20 +483,40 @@ function TimelineNodeComponent({
             </div>
           </div>
           
-          {node.xp && (
+          {xpReward !== null && (
             <div 
-              className="px-3 py-1 rounded-full text-sm font-semibold"
+              className="hidden items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold md:inline-flex"
               style={{
-                backgroundColor: isDarkMode ? 'rgba(120, 53, 15, 0.3)' : '#FFF8E1',
-                color: '#FFB400'
+                backgroundColor: isDarkMode ? 'rgba(255, 180, 0, 0.2)' : 'rgba(255, 180, 0, 0.15)',
+                color: '#FFB400',
+                border: '1px solid rgba(255, 180, 0, 0.35)'
               }}
             >
-              +{node.xp} XP
+              <Star className="h-4 w-4" />
+              +{xpReward} XP
             </div>
           )}
         </div>
-      </div>
+      </motion.div>
     </motion.div>
+  );
+}
+
+function QuestLogSkeleton() {
+  return (
+    <div className="space-y-6">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="flex items-start gap-4">
+          <div className="h-10 w-10 rounded-full bg-slate-200/70 dark:bg-slate-700/70 animate-pulse" />
+          <div className="flex-1 rounded-2xl border border-white/30 bg-white/60 dark:border-slate-700/60 dark:bg-slate-900/60 p-4 backdrop-blur-xl shadow-lg">
+            <div className="h-4 w-2/3 rounded-full bg-slate-200/80 dark:bg-slate-700/80 animate-pulse" />
+            <div className="mt-3 h-3 w-1/3 rounded-full bg-slate-200/80 dark:bg-slate-700/80 animate-pulse" />
+            <div className="mt-4 h-3 w-1/2 rounded-full bg-slate-200/80 dark:bg-slate-700/80 animate-pulse" />
+          </div>
+        </div>
+      ))}
+      <div className="text-center text-sm text-slate-500 dark:text-slate-300">Loading Quest Log...</div>
+    </div>
   );
 }
 

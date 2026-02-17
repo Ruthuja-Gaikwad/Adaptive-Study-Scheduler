@@ -1,0 +1,1 @@
+export const N8N_WEBHOOK_URL = 'http://localhost:5678/webhook-test/generate-tasks';

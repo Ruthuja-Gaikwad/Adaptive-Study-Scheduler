@@ -18,12 +18,15 @@ import {
   Heart,
   Trash,
   Trophy,
+  Sparkles,
+  Star,
 } from 'lucide-react';
 import { Checkbox } from '../components/ui/checkbox';
 import { Progress } from '../components/ui/progress';
 import { toast } from 'sonner';
 import { useDarkMode } from '../contexts/DarkModeContext';
 import { supabase } from '../lib/supabaseClient';
+import { N8N_WEBHOOK_URL } from '../config/webhooks';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -117,6 +120,7 @@ export default function Dashboard() {
   const [isGenerating, setIsGenerating] = useState(false);
   const loadSeqRef = useRef(0);
   const sessionRef = useRef(null);
+  const hasFetchedRef = useRef(false);
 
   const totalXp = useMemo(() => {
     if (!profile) return 0;
@@ -124,6 +128,12 @@ export default function Dashboard() {
     if (Number.isFinite(profile?.current_xp)) return profile?.current_xp ?? 0;
     return 0;
   }, [profile]);
+
+  const displayName = profile?.full_name?.trim() || 'Scholar';
+  const numericGrade = Number(profile?.grade_level);
+  const isJunior = Number.isFinite(numericGrade) && numericGrade >= 1 && numericGrade <= 5;
+  const displayGrade = Number.isFinite(numericGrade) ? numericGrade : profile?.grade_level ?? '--';
+  const greetingLine = `Welcome back, ${displayName}! Ready for your Class ${displayGrade} Quests?`;
 
   const level = Math.floor(totalXp / 1000) + 1;
   const xpIntoLevel = totalXp % 1000;
@@ -257,187 +267,233 @@ export default function Dashboard() {
     setTimeout(() => container.remove(), 1600);
   };
 
-  useEffect(() => {
-    let isMounted = true;
-    if (shouldDebug) console.log('1. Dashboard mounted');
+  const fetchDashboardData = async (userId) => {
+    const loadSeq = loadSeqRef.current + 1;
+    loadSeqRef.current = loadSeq;
+    
+    console.log('[FETCH]', loadSeq, 'Starting REST API fetch for user:', userId);
 
-    const waitForSession = async () =>
-      new Promise((resolve) => {
-        let resolved = false;
-        if (sessionRef.current) {
-          resolve(sessionRef.current);
-          return;
-        }
-        const { data: subscription } = supabase.auth.onAuthStateChange(
-          (_event, session) => {
-            if (resolved) return;
-            resolved = true;
-            subscription?.subscription?.unsubscribe();
-            resolve(session || null);
-          }
-        );
-        setTimeout(() => {
-          if (resolved) return;
-          resolved = true;
-          subscription?.subscription?.unsubscribe();
-          resolve(sessionRef.current || null);
-        }, 2000);
-      });
+    try {
+      if (loadSeq === loadSeqRef.current) {
+        setLoading(true);
+        setLoadError('');
+      }
 
-    const loadDashboardData = async () => {
-      const loadSeq = loadSeqRef.current + 1;
-      loadSeqRef.current = loadSeq;
-      try {
-        if (isMounted) {
-          setLoading(true);
-          setLoadError('');
-        }
-
-        if (shouldDebug) console.log('2. Waiting for auth session');
-
-        let session = await waitForSession();
-        if (!session?.user) {
-          for (let attempt = 0; attempt < 3; attempt += 1) {
-            await sleep(250);
-            if (sessionRef.current?.user) {
-              session = sessionRef.current;
+      // Get token from localStorage with direct SDK fallback
+      console.log('[FETCH]', loadSeq, 'Getting session token...');
+      let token = null;
+      
+      // Try localStorage keys that Supabase might use
+      const possibleKeys = [
+        'sb-session',
+        ...Object.keys(localStorage).filter(k => k.includes('auth') || k.includes('token'))
+      ];
+      
+      console.log('[FETCH]', loadSeq, 'Checking localStorage keys:', possibleKeys);
+      
+      for (const key of possibleKeys) {
+        const value = localStorage.getItem(key);
+        if (value) {
+          try {
+            const parsed = JSON.parse(value);
+            token = parsed?.access_token || parsed?.session?.access_token;
+            if (token) {
+              console.log('[FETCH]', loadSeq, '✓ Token found in', key);
               break;
             }
+          } catch (e) {
+            // Not JSON, try next key
           }
         }
-        const user = session?.user || null;
+      }
 
-        if (shouldDebug) console.log('3. Session resolved:', user?.id || 'none');
-
-        if (!user) {
-          if (isMounted && loadSeq === loadSeqRef.current) {
-            setLoadError('Session missing. Please sign in again.');
-          }
-          navigate('/login', { replace: true });
-          return;
-        }
-
-        if (shouldDebug) console.log('4. Fetching profile');
-
-        if (shouldDebug) {
-          const token = session?.access_token;
-          if (token) {
-            await debugProfilesPing(token);
-          } else {
-            console.warn('No access token available for diagnostics');
-          }
-        }
-
-        let profileRes;
+      // Fallback: try SDK call with timeout
+      if (!token) {
+        console.log('[FETCH]', loadSeq, 'No token in localStorage, trying SDK with short timeout...');
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('SDK timeout')), 2000)
+        );
+        
         try {
-          profileRes = await withTimeout(
-            supabase
-              .from('profiles')
-              .select('full_name, grade_level, interests, xp, availability, difficulty_setting, preferences')
-              .eq('id', user.id)
-              .single(),
-            8000,
-            'Profile'
-          );
-        } catch (err) {
-          const token = session?.access_token;
+          const { data } = await Promise.race([sessionPromise, timeoutPromise]);
+          token = data?.session?.access_token;
           if (token) {
-            const url = buildRestUrl('profiles', {
-              select: 'full_name,grade_level,interests,xp,availability,difficulty_setting,preferences',
-              id: `eq.${user.id}`,
-              limit: '1',
-            });
-            const data = await restFetchJson(url, token, 8000, 'Profile');
-            profileRes = { data: Array.isArray(data) ? data[0] : null, error: null };
-          } else {
-            throw err;
+            console.log('[FETCH]', loadSeq, '✓ Token from SDK');
           }
+        } catch (err) {
+          console.warn('[FETCH]', loadSeq, 'SDK call failed:', err.message);
+        }
+      }
+
+      if (!token) {
+        throw new Error('No access token available - user may need to login again');
+      }
+
+      // Fetch profile via REST API with timeout
+      console.log('[FETCH]', loadSeq, 'Fetching profile...');
+      const profileUrl = `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`;
+      const profileController = new AbortController();
+      const profileTimeoutId = setTimeout(() => profileController.abort(), 8000);
+      
+      try {
+        const profileResponse = await fetch(profileUrl, {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+          },
+          signal: profileController.signal,
+        });
+
+        if (!profileResponse.ok) {
+          const errorText = await profileResponse.text();
+          throw new Error(`Profile error ${profileResponse.status}: ${errorText}`);
         }
 
-        if (shouldDebug) console.log('4b. Fetching tasks');
+        const profileData = await profileResponse.json();
+        console.log('[FETCH]', loadSeq, 'Profile received:', profileData?.length, 'records');
 
-        let tasksRes;
+        // Fetch tasks via REST API with timeout
+        console.log('[FETCH]', loadSeq, 'Fetching tasks...');
+        const tasksUrl = `${SUPABASE_URL}/rest/v1/tasks?student_id=eq.${userId}&select=*&order=created_at.desc`;
+        const tasksController = new AbortController();
+        const tasksTimeoutId = setTimeout(() => tasksController.abort(), 8000);
+        
         try {
-          tasksRes = await withTimeout(
-            supabase
-              .from('tasks')
-              .select(
-                'id, student_id, title, subject_name, is_completed, estimated_time_mins, xp_reward, due_date, created_at'
-              )
-              .eq('student_id', user.id)
-              .order('created_at', { ascending: false }),
-            8000,
-            'Tasks'
-          );
-        } catch (err) {
-          const token = session?.access_token;
-          if (token) {
-            const url = buildRestUrl('tasks', {
-              select:
-                'id,student_id,title,subject_name,is_completed,estimated_time_mins,xp_reward,due_date,created_at',
-              student_id: `eq.${user.id}`,
-              order: 'created_at.desc',
-            });
-            const data = await restFetchJson(url, token, 8000, 'Tasks');
-            tasksRes = { data: Array.isArray(data) ? data : [], error: null };
-          } else {
-            throw err;
-          }
-        }
+          const tasksResponse = await fetch(tasksUrl, {
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${token}`,
+            },
+            signal: tasksController.signal,
+          });
 
-        if (profileRes?.error) throw profileRes.error;
-        if (isMounted && loadSeq === loadSeqRef.current) {
-          setProfile(profileRes?.data || createEmptyProfile());
-        }
-
-        if (tasksRes?.error) {
-          console.error('Error fetching tasks:', tasksRes.error.message);
-          if (isMounted && loadSeq === loadSeqRef.current) {
-            setTasks([]);
+          if (!tasksResponse.ok) {
+            const errorText = await tasksResponse.text();
+            throw new Error(`Tasks error ${tasksResponse.status}: ${errorText}`);
           }
-        } else {
-          if (isMounted && loadSeq === loadSeqRef.current) {
-            setTasks(tasksRes?.data || []);
-          }
-        }
 
-        if (shouldDebug) console.log('5. Data fetch complete');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        console.error('Error loading dashboard data:', message);
-        if (isMounted && loadSeq === loadSeqRef.current) {
-          setLoadError(message);
+          const tasksData = await tasksResponse.json();
+          console.log('[FETCH]', loadSeq, 'Tasks received:', tasksData?.length, 'items');
+
+          // Only update state if this is still the latest request
+          if (loadSeq === loadSeqRef.current) {
+            if (Array.isArray(profileData) && profileData.length > 0) {
+              setProfile(profileData[0]);
+              console.log('[FETCH] ✅', loadSeq, 'Profile loaded');
+            } else {
+              setProfile(createEmptyProfile());
+            }
+
+            if (Array.isArray(tasksData)) {
+              setTasks(tasksData);
+              console.log('[FETCH] ✅', loadSeq, 'Tasks loaded');
+            } else {
+              setTasks([]);
+            }
+
+            console.log('[FETCH] ✅', loadSeq, 'All data loaded - setting loading to false');
+            setLoading(false);
+          }
+        } finally {
+          clearTimeout(tasksTimeoutId);
         }
       } finally {
-        if (isMounted && loadSeq === loadSeqRef.current) {
-          setLoading(false);
-        }
-        if (shouldDebug) console.log('6. Loading set to false');
+        clearTimeout(profileTimeoutId);
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[FETCH] ❌', loadSeq, 'Error:', message);
+      
+      if (loadSeq === loadSeqRef.current) {
+        setLoadError(message);
+        setProfile(createEmptyProfile());
+        setTasks([]);
+        setLoading(false);
+      }
+    }
+  };
+
+  const refreshTasks = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('student_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setTasks(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to refresh tasks:', err);
+      toast.error('Could not refresh tasks.');
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const handleMount = async () => {
+      console.log('[MOUNT] Checking session...');
+      
+      // Check localStorage first (fastest path)
+      const authTokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
+      let session = null;
+      
+      if (authTokenKey) {
+        const tokenStr = localStorage.getItem(authTokenKey);
+        if (tokenStr) {
+          try {
+            const parsed = JSON.parse(tokenStr);
+            session = parsed;
+            console.log('[MOUNT] ✓ Session found in localStorage');
+          } catch (e) {
+            console.warn('[MOUNT] localStorage corrupted');
+          }
+        }
+      }
+
+      if (session?.user && isMounted) {
+        console.log('🚀 Session recovered from localStorage. Fetching...');
+        fetchDashboardData(session.user.id);
+        return; // SUCCESS
+      }
+
+      console.log('[MOUNT] No localStorage session. Waiting for auth events...');
     };
 
-    loadDashboardData();
+    handleMount();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        console.log('[AUTH_CHANGE]', event);
+        
+        // Handle INITIAL_SESSION (happens on page load when session exists)
+        if (event === 'INITIAL_SESSION' && session?.user && isMounted) {
+          console.log('✅ INITIAL_SESSION detected. Fetching data...');
+          fetchDashboardData(session.user.id);
+        } 
+        // Handle new sign-ins
+        else if (event === 'SIGNED_IN' && session && isMounted) {
+          console.log('✅ SIGNED_IN event received. Fetching data...');
+          fetchDashboardData(session.user.id);
+        } 
+        // Handle sign-outs
+        else if (event === 'SIGNED_OUT' && isMounted) {
+          console.log('🚪 SIGNED_OUT event received - redirecting to login');
+          hasFetchedRef.current = false;
+          setLoading(false);
+          navigate('/login', { replace: true });
+        }
+      }
+    );
 
     return () => {
       isMounted = false;
+      subscription?.unsubscribe();
     };
-  }, [navigate, refreshKey]);
-
-  useEffect(() => {
-    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
-      if (shouldDebug) console.log('Auth event:', event);
-      sessionRef.current = session || null;
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        if (session?.user) {
-          setRefreshKey((prev) => prev + 1);
-        }
-      } else if (event === 'SIGNED_OUT') {
-        navigate('/login', { replace: true });
-      }
-    });
-
-    return () => subscription?.subscription?.unsubscribe();
-  }, [navigate]);
+  }, []);
 
   const handleTaskToggle = async (taskId, xpValue, currentStatus) => {
     const user = await getSessionUser();
@@ -479,7 +535,7 @@ export default function Dashboard() {
       .eq('id', profile?.id);
 
     setProfile((prev) => (prev ? { ...prev, [xpColumn]: newTotalXp } : prev));
-    toast.success(`Mission Accomplished! +${xpValue} XP`);
+    toast.success(`Quest Complete! +${xpValue} XP`);
   };
 
   const handleTaskDelete = async (taskId) => {
@@ -666,20 +722,37 @@ export default function Dashboard() {
       return;
     }
 
-    const N8N_URL = 'http://localhost:5678/webhook-test/generate-tasks';
+    const N8N_URL = N8N_WEBHOOK_URL;
+
+    if (!N8N_URL || N8N_URL.includes('[PASTE_YOUR_ONE_WEBHOOK_URL]')) {
+      toast.error('Webhook URL not configured');
+      setIsGenerating(false);
+      return;
+    }
 
     try {
-      await fetch(N8N_URL, {
+      const response = await fetch(N8N_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student_id: user.id }),
+        body: JSON.stringify({
+          student_id: user.id,
+          action: 'generate',
+        }),
       });
-      alert('AI is generating your missions... Refresh in a moment!');
+      if (!response.ok) {
+        console.warn('n8n returned a non-OK response.');
+        setIsGenerating(false);
+        return;
+      }
+
+      await response.json().catch(() => null);
+      await refreshTasks(user.id);
+      setIsGenerating(false);
+      return;
     } catch (err) {
       console.error('n8n connection failed:', err);
-    } finally {
-      setTimeout(() => setIsGenerating(false), 30000);
     }
+    setIsGenerating(false);
   };
   const currentSlotLabel = TIME_SLOTS[currentSlotIndex] || 'Today';
 
@@ -785,31 +858,71 @@ export default function Dashboard() {
       animate="show"
       transition={{ duration: 0.4, ease: 'easeOut' }}
     >
-      <motion.div className="px-8 py-6" variants={itemVariants}>
+      <motion.div className="w-full max-w-screen-xl mx-auto px-4 py-6 md:px-8" variants={itemVariants}>
         <div className="space-y-6">
-          <header className="flex flex-col gap-4 bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 md:flex-row md:items-center md:justify-between">
+          <header
+            className={`flex flex-col gap-4 p-6 rounded-3xl shadow-sm md:flex-row md:items-center md:justify-between ${
+              isJunior
+                ? 'border-0'
+                : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700'
+            }`}
+            style={
+              isJunior
+                ? {
+                    background: isDarkMode
+                      ? 'linear-gradient(135deg, #FDE68A, #FCA5A5, #A5F3FC)'
+                      : 'linear-gradient(135deg, #FFF3B0, #FF9BD2, #A0E7E5)',
+                  }
+                : undefined
+            }
+          >
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                Welcome, {profile?.full_name?.split(' ')[0] || 'Scholar'}! 🛡️
+              <h1
+                className="text-2xl font-bold"
+                style={{ color: isJunior ? '#111827' : isDarkMode ? '#f9fafb' : '#111827' }}
+              >
+                {greetingLine}
               </h1>
               <div className="flex flex-wrap gap-2 mt-2">
-                <span className="bg-orange-100 text-orange-700 text-xs font-bold px-2 py-1 rounded-full uppercase">
-                  Class {profile?.grade_level ?? '--'}
+                <span
+                  className="text-xs font-bold px-2 py-1 rounded-full uppercase inline-flex items-center gap-1"
+                  style={
+                    isJunior
+                      ? { backgroundColor: '#FFEA70', color: '#7A4E00' }
+                      : { backgroundColor: '#FFEDD5', color: '#9A3412' }
+                  }
+                >
+                  {isJunior && <Star className="w-3 h-3" />}
+                  Class {displayGrade}
                 </span>
-                <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded-full uppercase">
-                  {difficultyLabel} Mode
+                <span
+                  className="text-xs font-bold px-2 py-1 rounded-full uppercase inline-flex items-center gap-1"
+                  style={
+                    isJunior
+                      ? { backgroundColor: '#A7F3D0', color: '#065F46' }
+                      : { backgroundColor: '#FEE2E2', color: '#B91C1C' }
+                  }
+                >
+                  {isJunior && <Sparkles className="w-3 h-3" />}
+                  {difficultyLabel} Quest Mode
                 </span>
               </div>
             </div>
 
             <div className="text-right">
-              <p className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+              <p
+                className="text-sm font-bold uppercase tracking-widest"
+                style={{ color: isJunior ? '#1f2937' : '#6b7280' }}
+              >
                 Level {currentLevel}
               </p>
-              <div className="w-32 h-3 bg-gray-200 rounded-full mt-1 overflow-hidden">
+              <div
+                className="w-32 h-3 rounded-full mt-1 overflow-hidden"
+                style={{ backgroundColor: isJunior ? '#FDE68A' : '#e5e7eb' }}
+              >
                 <div
-                  className="h-full bg-[#006D77] transition-all duration-1000"
-                  style={{ width: `${xpProgress}%` }}
+                  className="h-full transition-all duration-1000"
+                  style={{ backgroundColor: isJunior ? '#FB7185' : '#006D77', width: `${xpProgress}%` }}
                 />
               </div>
             </div>
@@ -827,12 +940,20 @@ export default function Dashboard() {
                 <motion.div
                   key={subject}
                   whileHover={{ scale: 1.05 }}
-                  className="p-4 rounded-2xl border-2 transition-all cursor-pointer group"
+                  className="p-4 rounded-2xl border-2 transition-all cursor-pointer group relative"
                   style={{
                     backgroundColor: cardBg,
                     borderColor: iconColor,
                   }}
                 >
+                  {isJunior && (
+                    <span
+                      className="absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center rounded-full"
+                      style={{ backgroundColor: '#FFE66D', color: '#7A4E00' }}
+                    >
+                      <Star className="h-3.5 w-3.5" />
+                    </span>
+                  )}
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center mb-3 group-hover:scale-110 transition-transform"
                     style={{ backgroundColor: iconBg }}
@@ -853,7 +974,7 @@ export default function Dashboard() {
             })}
             {(!profile?.interests || profile?.interests?.length === 0) && (
               <div className="col-span-2 md:col-span-4 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-sm text-gray-400">
-                Select subjects in onboarding to build your curriculum hub.
+                Select subjects in onboarding to build your Quest Hub.
               </div>
             )}
           </div>
@@ -862,12 +983,12 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                  Next Study Slot
+                  Next Quest Window
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {isCurrentSlotAvailable
-                    ? `Current Status: ${currentSlotLabel} Study Window is OPEN.`
-                    : `Current Status: ${currentSlotLabel} Study Window is CLOSED.`}
+                    ? `Current Status: ${currentSlotLabel} Quest Window is OPEN.`
+                    : `Current Status: ${currentSlotLabel} Quest Window is CLOSED.`}
                 </p>
               </div>
               <div className="text-xs font-semibold text-[#006D77]">Adaptive</div>
@@ -878,7 +999,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                  Smart Task Generator
+                  Quest Generator
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {isCurrentSlotAvailable
@@ -892,7 +1013,7 @@ export default function Dashboard() {
                 disabled={isGenerating}
                 className="px-4 py-2 rounded-lg bg-[#006D77] text-white text-xs font-semibold"
               >
-                {isGenerating ? 'AI is Thinking (Cooldown...)' : "Generate Today's Missions"}
+                {isGenerating ? 'Consulting the Oracle...' : "Generate Today's Quests"}
               </button>
             </div>
           </div>
@@ -900,7 +1021,7 @@ export default function Dashboard() {
           <div className="rounded-2xl border px-5 py-4 bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                Weekly Rhythm
+                Weekly Quest Rhythm
               </p>
               <span className="text-xs text-gray-400">Availability</span>
             </div>
@@ -942,7 +1063,7 @@ export default function Dashboard() {
         </div>
       </motion.div>
 
-      <motion.div className="px-8 py-6" variants={itemVariants}>
+      <motion.div className="w-full max-w-screen-xl mx-auto px-4 py-6 md:px-8" variants={itemVariants}>
         <div className="grid gap-4 md:grid-cols-3">
           <div
             className="rounded-2xl px-5 py-4 shadow-sm"
@@ -1060,12 +1181,12 @@ export default function Dashboard() {
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
               <h3 className="text-3xl font-bold">
-                Mission Controller: {activeMission?.title || primarySubject}
+                Quest Controller: {activeMission?.title || primarySubject}
               </h3>
               <p className="text-white/90 mt-2">
                 {activeMission
                   ? `Subject: ${activeMission.subject_name || 'General'}`
-                  : 'Generate missions to queue your deep work.'}
+                  : 'Generate quests to queue your deep work.'}
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -1097,7 +1218,7 @@ export default function Dashboard() {
               className="text-xl font-semibold"
               style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
             >
-              Daily Blueprint
+              Daily Quests
             </h3>
             <span className="text-xs text-slate-400">Based on your interests</span>
           </div>
@@ -1109,58 +1230,80 @@ export default function Dashboard() {
                 Ready to Level Up?
               </p>
               <p className="text-xs mt-1">
-                Initialize missions tailored to your subjects.
+                Initialize quests tailored to your subjects.
               </p>
               <button
                 type="button"
                 onClick={handleInitializeDailyMissions}
                 className="mt-4 px-4 py-2 rounded-lg bg-[#006D77] text-white text-sm font-semibold"
               >
-                Initialize Daily Missions
+                Initialize Daily Quests
               </button>
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2">
-              {todayTasks.map((task) => (
-                <motion.div
-                  key={task.id}
-                  whileHover={{ scale: 1.02 }}
-                  className="rounded-xl border px-4 py-3 flex items-center gap-4"
-                  style={{
-                    borderColor: isDarkMode ? '#374151' : '#e5e7eb',
-                    backgroundColor: isDarkMode ? '#111827' : '#f8fafc',
-                  }}
-                >
-                  <Checkbox
-                    checked={task.is_completed}
-                    onCheckedChange={() =>
-                      handleTaskToggle(
-                        task.id,
-                        task.xp_reward ?? calculateXpReward(task.subject_name),
-                        task.is_completed
-                      )
-                    }
-                    className="w-5 h-5"
-                  />
-                  <div className="flex-1">
-                    <span
-                      className="px-2 py-1 rounded-full text-[10px] font-semibold"
-                      style={getSubjectColorStyle(task.subject_name || 'General', isDarkMode)}
-                    >
-                      {task.subject_name || 'General'}
-                    </span>
-                    <p className="text-sm font-semibold mt-2">
-                      {task.title}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Duration: {task.estimated_time_mins || taskPreset.durationMins} mins
-                    </p>
-                  </div>
-                  <div className="text-xs font-semibold text-[#FFB400]">
-                    +{task.xp_reward ?? calculateXpReward(task.subject_name)} XP
-                  </div>
-                </motion.div>
-              ))}
+              {todayTasks.map((task) => {
+                const complexityMeta = getComplexityMeta(
+                  0.8,
+                  isDarkMode
+                );
+                const categoryBadge = getTaskCategoryBadge(
+                  null,
+                  0.8,
+                  isDarkMode
+                );
+                return (
+                  <motion.div
+                    key={task.id}
+                    whileHover={{ scale: 1.02 }}
+                    className="rounded-xl border px-4 py-3 flex items-center gap-4"
+                    style={{
+                      borderColor: complexityMeta.borderColor,
+                      backgroundColor: isDarkMode ? '#111827' : '#f8fafc',
+                    }}
+                  >
+                    <Checkbox
+                      checked={task.is_completed}
+                      onCheckedChange={() =>
+                        handleTaskToggle(
+                          task.id,
+                          task.xp_reward ?? calculateXpReward(task.subject_name),
+                          task.is_completed
+                        )
+                      }
+                      className="w-5 h-5"
+                    />
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className="px-2 py-1 rounded-full text-[10px] font-semibold"
+                          style={getSubjectColorStyle(task.subject_name || 'General', isDarkMode)}
+                        >
+                          {task.subject_name || 'General'}
+                        </span>
+                        <span
+                          className="px-2 py-1 rounded-full text-[10px] font-semibold"
+                          style={{
+                            backgroundColor: categoryBadge.badgeBg,
+                            color: categoryBadge.badgeText,
+                          }}
+                        >
+                          {categoryBadge.label}
+                        </span>
+                      </div>
+                      <p className="text-sm font-semibold mt-2">
+                        {task.title}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Duration: {task.estimated_time_mins || taskPreset.durationMins} mins
+                      </p>
+                    </div>
+                    <div className="text-xs font-semibold text-[#FFB400]">
+                      +{task.xp_reward ?? calculateXpReward(task.subject_name)} XP
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1178,7 +1321,7 @@ export default function Dashboard() {
               style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
             >
               <Clock className="w-5 h-5 text-[#006D77]" />
-              Today's Waypoints
+              Today's Quest Log
             </h3>
             <div className="text-sm text-slate-400">Level {level}</div>
           </div>
@@ -1193,80 +1336,100 @@ export default function Dashboard() {
 
           <div className="mt-6 space-y-3">
             <AnimatePresence mode="popLayout">
-              {tasks.map((task) => (
-                <motion.div
-                  key={task.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.2 }}
-                  whileHover={{ y: -4, scale: 1.01 }}
-                  className="group flex items-center gap-4 rounded-xl border px-4 py-3"
-                  style={{
-                    borderColor: isDarkMode ? '#374151' : '#e5e7eb',
-                    backgroundColor: isDarkMode ? '#111827' : '#f8fafc',
-                  }}
-                >
-                  <Checkbox
-                    checked={task.is_completed}
-                    onCheckedChange={() =>
-                      handleTaskToggle(
-                        task.id,
-                        task.xp_reward ?? calculateXpReward(task.subject_name),
-                        task.is_completed
-                      )
-                    }
-                    className="w-5 h-5"
-                  />
-                  <div className="flex-1">
-                    <div
-                      className="font-medium"
-                      style={{
-                        textDecoration: task.is_completed ? 'line-through' : 'none',
-                        color: task.is_completed
-                          ? '#9ca3af'
-                          : isDarkMode
-                          ? '#f3f4f6'
-                          : '#111827',
-                      }}
-                    >
-                      {task.title}
+              {tasks.map((task) => {
+                const complexityMeta = getComplexityMeta(
+                  0.8,
+                  isDarkMode
+                );
+                const categoryBadge = getTaskCategoryBadge(
+                  null,
+                  0.8,
+                  isDarkMode
+                );
+                return (
+                  <motion.div
+                    key={task.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.2 }}
+                    whileHover={{ y: -4, scale: 1.01 }}
+                    className="group flex items-center gap-4 rounded-xl border px-4 py-3"
+                    style={{
+                      borderColor: complexityMeta.borderColor,
+                      backgroundColor: isDarkMode ? '#111827' : '#f8fafc',
+                    }}
+                  >
+                    <Checkbox
+                      checked={task.is_completed}
+                      onCheckedChange={() =>
+                        handleTaskToggle(
+                          task.id,
+                          task.xp_reward ?? calculateXpReward(task.subject_name),
+                          task.is_completed
+                        )
+                      }
+                      className="w-5 h-5"
+                    />
+                    <div className="flex-1">
+                      <div
+                        className="font-medium"
+                        style={{
+                          textDecoration: task.is_completed ? 'line-through' : 'none',
+                          color: task.is_completed
+                            ? '#9ca3af'
+                            : isDarkMode
+                            ? '#f3f4f6'
+                            : '#111827',
+                        }}
+                      >
+                        {task.title}
+                      </div>
+                      <div
+                        className="text-sm flex items-center gap-1 mt-1"
+                        style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
+                      >
+                        <Clock className="w-3 h-3" />
+                        Estimated: {task.estimated_time_mins || taskPreset.durationMins} mins
+                      </div>
                     </div>
-                    <div
-                      className="text-sm flex items-center gap-1 mt-1"
-                      style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
-                    >
-                      <Clock className="w-3 h-3" />
-                      Estimated: {task.estimated_time_mins || taskPreset.durationMins} mins
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="px-3 py-1 rounded-full text-xs font-medium"
+                        style={getSubjectColorStyle(task.subject_name || 'General', isDarkMode)}
+                      >
+                        {task.subject_name || 'General'}
+                      </span>
+                      <span
+                        className="px-3 py-1 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: categoryBadge.badgeBg,
+                          color: categoryBadge.badgeText,
+                        }}
+                      >
+                        {categoryBadge.label}
+                      </span>
+                      <span
+                        className="px-3 py-1 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: isDarkMode ? '#5B3F00' : '#FFF8E1',
+                          color: isDarkMode ? '#FCD34D' : '#FFB400',
+                        }}
+                      >
+                        +{task.xp_reward ?? calculateXpReward(task.subject_name)} XP
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleTaskDelete(task.id)}
+                        className="opacity-0 group-hover:opacity-100 transition text-slate-400 hover:text-rose-400"
+                        aria-label="Delete task"
+                      >
+                        <Trash className="w-4 h-4" />
+                      </button>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="px-3 py-1 rounded-full text-xs font-medium"
-                      style={getSubjectColorStyle(task.subject_name || 'General', isDarkMode)}
-                    >
-                      {task.subject_name || 'General'}
-                    </span>
-                    <span
-                      className="px-3 py-1 rounded-full text-xs font-medium"
-                      style={{
-                        backgroundColor: isDarkMode ? '#5B3F00' : '#FFF8E1',
-                        color: isDarkMode ? '#FCD34D' : '#FFB400',
-                      }}
-                    >
-                      +{task.xp_reward ?? calculateXpReward(task.subject_name)} XP
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleTaskDelete(task.id)}
-                      className="opacity-0 group-hover:opacity-100 transition text-slate-400 hover:text-rose-400"
-                      aria-label="Delete task"
-                    >
-                      <Trash className="w-4 h-4" />
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
             {tasks.length === 0 && (
               <div className="text-sm text-slate-400">No tasks yet.</div>
@@ -1299,4 +1462,66 @@ function getSubjectColorStyle(subject, isDarkMode) {
       color: isDarkMode ? '#d1d5db' : '#374151',
     }
   );
+}
+
+function getComplexityMeta(complexity, isDarkMode) {
+  const value = Number(complexity);
+  if (value >= 1.5) {
+    return {
+      label: 'High Intensity',
+      borderColor: isDarkMode ? '#ef4444' : '#dc2626',
+      badgeBg: isDarkMode ? '#7f1d1d' : '#fee2e2',
+      badgeText: isDarkMode ? '#fca5a5' : '#b91c1c',
+    };
+  }
+  if (value >= 1.1) {
+    return {
+      label: 'Focused Reading',
+      borderColor: isDarkMode ? '#38bdf8' : '#2563eb',
+      badgeBg: isDarkMode ? '#0c4a6e' : '#dbeafe',
+      badgeText: isDarkMode ? '#bae6fd' : '#1d4ed8',
+    };
+  }
+  if (Number.isFinite(value)) {
+    return {
+      label: 'Skill Practice',
+      borderColor: isDarkMode ? '#22c55e' : '#16a34a',
+      badgeBg: isDarkMode ? '#14532d' : '#dcfce7',
+      badgeText: isDarkMode ? '#86efac' : '#166534',
+    };
+  }
+
+  return {
+    label: 'Study Session',
+    borderColor: isDarkMode ? '#374151' : '#e5e7eb',
+    badgeBg: isDarkMode ? '#374151' : '#e5e7eb',
+    badgeText: isDarkMode ? '#d1d5db' : '#6b7280',
+  };
+}
+
+function getTaskCategoryBadge(category, complexity, isDarkMode) {
+  const normalized = String(category || '').toLowerCase();
+  const value = Number(complexity);
+
+  if (normalized === 'stem') {
+    return {
+      label: value >= 1.5 ? 'High Intensity' : 'STEM Focus',
+      badgeBg: isDarkMode ? '#7f1d1d' : '#fee2e2',
+      badgeText: isDarkMode ? '#fca5a5' : '#b91c1c',
+    };
+  }
+
+  if (normalized === 'humanities') {
+    return {
+      label: 'Deep Reading',
+      badgeBg: isDarkMode ? '#0c4a6e' : '#dbeafe',
+      badgeText: isDarkMode ? '#bae6fd' : '#1d4ed8',
+    };
+  }
+
+  return {
+    label: 'Skill Practice',
+    badgeBg: isDarkMode ? '#14532d' : '#dcfce7',
+    badgeText: isDarkMode ? '#86efac' : '#166534',
+  };
 }

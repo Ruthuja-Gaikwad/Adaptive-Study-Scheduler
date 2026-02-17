@@ -227,17 +227,14 @@ export function Dashboard() {
 }
 
 function TaskRow({ task, onToggle, isDarkMode }) {
+  const cardStyle = getCardStyle(task.cognitive_load_score ?? task.complexity);
+
   return (
     <motion.div
-      className="flex items-center gap-4 p-4 rounded-lg hover:shadow-md transition-all"
+      className={`flex items-center gap-4 p-4 rounded-lg border hover:shadow-md transition-all ${cardStyle}`}
       whileHover={{ y: -2 }}
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
-      style={{
-        backgroundColor: isDarkMode ? '#374151' : '#f3f4f6',
-        borderColor: isDarkMode ? '#4b5563' : '#e5e7eb',
-        borderWidth: '1px',
-      }}
     >
       <Checkbox
         checked={task.completed}
@@ -330,4 +327,11 @@ function getSubjectColorStyle(subject, isDarkMode) {
     Biology: { backgroundColor: '#fbcfe8', color: '#9d174d' },
   };
   return colors[subject] || { backgroundColor: isDarkMode ? '#4b5563' : '#f3f4f6', color: isDarkMode ? '#d1d5db' : '#374151' };
+}
+
+function getCardStyle(score) {
+  const value = Number(score);
+  if (value >= 1.5) return 'border-red-500 bg-red-900/10';
+  if (value >= 1.2) return 'border-blue-500 bg-blue-900/10';
+  return 'border-green-500 bg-green-900/10';
 }
