@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router';
 import { RootLayout } from './components/RootLayout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import DashboardTasks from './pages/DashboardTasks.jsx';
 import { GPSView } from './components/GPSView.jsx';
 import { Quests } from './components/Quests.jsx';
 import { StudySquad } from './components/StudySquad.jsx';
@@ -35,12 +36,20 @@ export const router = createBrowserRouter([
     Component: Loading,
   },
   {
+    path: '/study-squad',
+    Component: StudySquad,
+  },
+  {
     path: '/dashboard',
     Component: RootLayout,
     children: [
       {
         index: true,
         Component: Dashboard,
+      },
+      {
+        path: 'tasks',
+        Component: DashboardTasks,
       },
       {
         path: 'path',

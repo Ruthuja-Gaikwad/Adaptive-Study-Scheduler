@@ -214,7 +214,7 @@ export function Onboarding() {
   };
 
   return (
-    <div className="min-h-screen w-screen bg-gradient-to-br from-white via-[#F0FDFA] to-[#E0F2FE] dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 transition-colors">
+    <div className="min-h-screen w-screen bg-gradient-to-br from-[#F8FAFC] via-[#F0FDFA] to-[#E0F2FE] dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 transition-colors">
       <div className="w-full px-6 py-12">
         {/* Progress Bar */}
         <div className="max-w-2xl mx-auto mb-8">

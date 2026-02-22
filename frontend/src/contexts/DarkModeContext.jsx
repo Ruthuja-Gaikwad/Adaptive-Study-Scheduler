@@ -2,6 +2,26 @@ import { createContext, useContext, useEffect, useState } from 'react';
 
 const DarkModeContext = createContext(undefined);
 
+// Apply theme synchronously before React renders
+function applyThemeSynchronously() {
+  if (typeof window === 'undefined') return false;
+  
+  const saved = localStorage.getItem('darkMode');
+  const isDark = saved === 'true';
+  
+  const html = document.documentElement;
+  if (isDark) {
+    html.classList.add('dark');
+    html.style.colorScheme = 'dark';
+  } else {
+    html.classList.remove('dark');
+    html.style.colorScheme = 'light';
+  }
+  
+  console.log('⚡ Theme applied synchronously on page load:', isDark ? '🌙 Dark' : '☀️ Light');
+  return isDark;
+}
+
 export function DarkModeProvider({ children }) {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     // Force clear any old dark mode setting on first load
@@ -12,8 +32,10 @@ export function DarkModeProvider({ children }) {
       // If not explicitly saved, default to light mode (false)
       if (saved === null) {
         localStorage.setItem('darkMode', 'false');
-        return false;
       }
+      
+      // Apply theme immediately
+      applyThemeSynchronously();
       
       // Parse the saved value
       return saved === 'true';
@@ -22,7 +44,7 @@ export function DarkModeProvider({ children }) {
     return false;
   });
 
-  // Initialize and sync with document element on mount
+  // Initialize and sync with document element on mount (backup)
   useEffect(() => {
     // Ensure document starts in correct state
     updateDarkMode(isDarkMode);
@@ -39,17 +61,25 @@ export function DarkModeProvider({ children }) {
     
     // Update document element class
     const html = document.documentElement;
+    
+    // Ensure clean state
+    html.classList.remove('dark');
+    
+    // Apply the correct class
     if (isDark) {
       html.classList.add('dark');
       html.style.colorScheme = 'dark';
     } else {
-      html.classList.remove('dark');
       html.style.colorScheme = 'light';
     }
+    
+    // Force repaint by accessing offsetHeight
+    void html.offsetHeight;
     
     // Log for debugging
     console.log('🌙 Dark Mode:', isDark);
     console.log('📝 Document has "dark" class:', html.classList.contains('dark'));
+    console.log('📝 HTML classList:', html.className);
     console.log('🎨 Color Scheme:', html.style.colorScheme);
   }
 
@@ -57,12 +87,22 @@ export function DarkModeProvider({ children }) {
     setIsDarkMode(prev => {
       const newValue = !prev;
       console.log('🔄 Toggling dark mode from', prev, 'to', newValue);
+      // Apply immediately
+      if (typeof window !== 'undefined') {
+        updateDarkMode(newValue);
+      }
       return newValue;
     });
   };
 
   const setDarkMode = (value) => {
-    setIsDarkMode(Boolean(value));
+    const boolValue = Boolean(value);
+    console.log('🔄 Setting dark mode to', boolValue);
+    setIsDarkMode(boolValue);
+    // Apply immediately
+    if (typeof window !== 'undefined') {
+      updateDarkMode(boolValue);
+    }
   };
 
   return (

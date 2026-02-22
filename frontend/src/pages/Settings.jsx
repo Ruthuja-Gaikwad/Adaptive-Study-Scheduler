@@ -249,7 +249,7 @@ export function Settings() {
       onClick={() => onChange(!checked)}
       className="relative h-6 w-11 rounded-full transition-colors"
       style={{
-        backgroundColor: checked ? '#06D6A0' : isDarkMode ? '#374151' : '#e5e7eb',
+        backgroundColor: checked ? '#06D6A0' : isDarkMode ? '#374151' : '#e2e8f0',
       }}
     >
       <motion.span
@@ -291,7 +291,7 @@ export function Settings() {
                     }
                     className="mt-1 w-44 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#06D6A0]"
                     style={{
-                      borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+                      borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
                       backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc',
                       color: isDarkMode ? '#f8fafc' : '#0f172a',
                     }}
@@ -305,7 +305,7 @@ export function Settings() {
           <div
             className="rounded-2xl border px-5 py-4"
             style={{
-              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
               backgroundColor: isDarkMode ? '#111827' : '#ffffff',
             }}
           >
@@ -326,7 +326,7 @@ export function Settings() {
           <div
             className="rounded-2xl border px-5 py-4"
             style={{
-              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
               backgroundColor: isDarkMode ? '#111827' : '#ffffff',
             }}
           >
@@ -351,7 +351,7 @@ export function Settings() {
         <div
           className="rounded-2xl border px-5 py-4"
           style={{
-            borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+            borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
             backgroundColor: isDarkMode ? '#111827' : '#ffffff',
           }}
         >
@@ -378,7 +378,7 @@ export function Settings() {
           <div
             className="rounded-2xl border px-5 py-4"
             style={{
-              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
               backgroundColor: isDarkMode ? '#111827' : '#ffffff',
             }}
           >
@@ -404,7 +404,7 @@ export function Settings() {
           <div
             className="rounded-2xl border px-5 py-4"
             style={{
-              borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+              borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
               backgroundColor: isDarkMode ? '#111827' : '#ffffff',
             }}
           >
@@ -480,7 +480,7 @@ export function Settings() {
       <div
         className="border-b sticky top-0 z-10 transition-colors"
         style={{
-          borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+          borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
           backgroundColor: isDarkMode ? '#0f172a' : '#ffffff',
         }}
       >
@@ -525,7 +525,7 @@ export function Settings() {
                 onClick={() => setActiveTab(category.id)}
                 className="w-full flex items-center justify-between rounded-2xl border px-4 py-3 text-left"
                 style={{
-                  borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+                  borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
                   backgroundColor:
                     activeTab === category.id
                       ? isDarkMode
@@ -568,7 +568,7 @@ export function Settings() {
               whileTap={{ scale: 0.97 }}
               className="px-4 py-2 rounded-lg border border-slate-300 text-sm"
               style={{
-                borderColor: isDarkMode ? '#1f2937' : '#e5e7eb',
+                borderColor: isDarkMode ? '#1f2937' : '#e2e8f0',
                 color: isDarkMode ? '#f8fafc' : '#0f172a',
               }}
             >

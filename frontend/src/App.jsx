@@ -3,6 +3,7 @@ import { router } from './routes';
 import { Toaster } from './components/ui/sonner';
 import { SidebarProvider } from './components/ui/sidebar';
 import { DarkModeProvider } from './contexts/DarkModeContext';
+import { CognitiveCheckinProvider } from './contexts/CognitiveCheckinContext';
 import {
   SessionBootstrapProvider,
   SessionLoadingOverlay,
@@ -12,11 +13,13 @@ export default function App() {
   return (
     <DarkModeProvider>
       <SessionBootstrapProvider>
-        <SidebarProvider>
-          <RouterProvider router={router} />
-          <SessionLoadingOverlay />
-          <Toaster />
-        </SidebarProvider>
+        <CognitiveCheckinProvider>
+          <SidebarProvider>
+            <RouterProvider router={router} />
+            <SessionLoadingOverlay />
+            <Toaster />
+          </SidebarProvider>
+        </CognitiveCheckinProvider>
       </SessionBootstrapProvider>
     </DarkModeProvider>
   );

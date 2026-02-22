@@ -1,0 +1,1023 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Users, BookOpen, MessageSquare, Trophy, CheckCircle2, Plus, Loader2, Terminal, Library } from 'lucide-react';
+import { Button } from './ui/button';
+import { Card } from './ui/card';
+import { CreateJoinSquad } from './group/CreateJoinSquad';
+import { useDarkMode } from '../contexts/DarkModeContext';
+import { supabase } from '../lib/supabaseClient';
+import { useSessionBootstrap } from '../contexts/SessionBootstrapContext';
+import { toast } from 'sonner';
+
+const MemberAvatar = ({ name, role, status, avatar, isSyncing, isDarkMode }) => (
+  <div className="flex flex-col items-center gap-1 group">
+    <div
+      className={`relative flex h-12 w-12 items-center justify-center rounded-full border-2 font-bold text-white
+      ${status === 'focusing'
+        ? `border-emerald-500 bg-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.35)]${isSyncing ? ' animate-pulse' : ''}`
+        : status === 'break'
+          ? 'border-amber-500 bg-amber-500/20'
+          : isDarkMode
+            ? 'border-slate-600 bg-slate-800 text-slate-100'
+            : 'border-slate-300 bg-slate-200 text-slate-700'}`}
+    >
+      {avatar}
+      {status === 'focusing' && (
+        <span
+          className={`absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 bg-emerald-500 animate-pulse ${
+            isDarkMode ? 'border-[#0F172A]' : 'border-white'
+          }`}
+        />
+      )}
+    </div>
+    <span
+      className={`text-[10px] ${
+        isDarkMode
+          ? 'text-slate-400 group-hover:text-slate-200'
+          : 'text-slate-500 group-hover:text-slate-700'
+      }`}
+    >
+      {name}
+    </span>
+    {role && (
+      <span className={`text-[9px] uppercase tracking-[0.2em] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+        {role}
+      </span>
+    )}
+  </div>
+);
+
+const SquadTaskItem = ({
+  title,
+  taskCategory,
+  rerouteReason,
+  isCompleted,
+  xpReward,
+  badgeLabel,
+  onComplete,
+  isCompleting,
+  isGroupObjective,
+  isDarkMode,
+}) => {
+  const category = taskCategory?.toLowerCase?.() || '';
+  const CategoryIcon = category.includes('sprint') ? Terminal : category.includes('insight') ? Library : null;
+
+  return (
+    <div
+      className={`flex items-center justify-between rounded-2xl border p-3 shadow-sm transition-all hover:shadow-md ${
+        isDarkMode ? 'border-[#1E293B] bg-[#1E293B]' : 'border-[#E2E8F0] bg-white'
+      } ${
+        isGroupObjective
+          ? isDarkMode
+            ? 'ring-1 ring-emerald-400/50 shadow-[0_0_18px_rgba(16,185,129,0.25)]'
+            : 'ring-1 ring-emerald-300/60 shadow-[0_0_16px_rgba(16,185,129,0.2)]'
+          : ''
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className={`flex h-5 w-5 items-center justify-center rounded border ${
+            isCompleted
+              ? 'border-emerald-500 bg-emerald-500'
+              : isDarkMode
+                ? 'border-slate-600'
+                : 'border-slate-300'
+          }`}
+        >
+          {isCompleted && <CheckCircle2 size={12} className="text-white" />}
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            {CategoryIcon && (
+              <span
+                className={`rounded-full p-1 ${isDarkMode ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-500'}`}
+              >
+                <CategoryIcon className="h-3 w-3" />
+              </span>
+            )}
+            <span className={`text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+              {title}
+            </span>
+          </div>
+          {badgeLabel && (
+            <p className={`text-[10px] uppercase tracking-[0.2em] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              {badgeLabel}
+            </p>
+          )}
+          {Number.isFinite(xpReward) && (
+            <p className={`text-xs ${isDarkMode ? 'text-emerald-300' : 'text-emerald-600'}`}>
+              +{xpReward} XP
+            </p>
+          )}
+          {rerouteReason && (
+            <div className="mt-2 border-l-4 border-blue-500 bg-blue-900/30 p-2 text-sm italic text-blue-200">
+              " {rerouteReason} "
+            </div>
+          )}
+        </div>
+      </div>
+      {onComplete && (
+        <Button
+          variant="secondary"
+          className="h-8 px-3 text-xs"
+          onClick={onComplete}
+          disabled={isCompleted || isCompleting}
+        >
+          {isCompleting ? (
+            <>
+              <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+              Updating...
+            </>
+          ) : isCompleted ? (
+            'Completed'
+          ) : (
+            'Complete'
+          )}
+        </Button>
+      )}
+    </div>
+  );
+};
+
+const SharedTimer = ({ timeLabel, isActive, isDarkMode }) => (
+  <div
+    className={`flex items-center gap-3 rounded-3xl border px-4 py-3 shadow-sm ${
+      isDarkMode ? 'border-[#1E293B] bg-[#1E293B]' : 'border-[#E2E8F0] bg-white'
+    }`}
+  >
+    <div className="flex items-center gap-3">
+      <span
+        className={`text-xs font-semibold uppercase tracking-[0.2em] ${
+          isDarkMode ? 'text-slate-300' : 'text-slate-500'
+        }`}
+      >
+        Shared Timer
+      </span>
+      <span
+        className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+          isDarkMode
+            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+        }`}
+      >
+        In Sync
+      </span>
+    </div>
+    <div className="ml-auto flex items-center gap-2">
+      <span className={`text-2xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-700'}`}>
+        {timeLabel}
+      </span>
+      {isActive && <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />}
+    </div>
+  </div>
+);
+
+export function StudySquad() {
+  console.log('🔥🔥🔥 StudySquad component LOADED - Version 2.0 with full logging 🔥🔥🔥');
+  
+  const { isDarkMode } = useDarkMode();
+  const { sessionUser, isSessionLoading } = useSessionBootstrap();
+  
+  console.log('[SQUAD] 🔍 Component render - Session state:', {
+    isSessionLoading,
+    hasSessionUser: !!sessionUser,
+    sessionUserId: sessionUser?.id,
+    sessionUserEmail: sessionUser?.email
+  });
+  
+  const [isTimerActive, setIsTimerActive] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(25 * 60);
+  const [isSquadModalOpen, setIsSquadModalOpen] = useState(false);
+  const [squad, setSquad] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [squadRefreshKey, setSquadRefreshKey] = useState(0);
+  const [sharedTasks, setSharedTasks] = useState([]);
+  const [sharedTasksLoading, setSharedTasksLoading] = useState(true);
+  const [completingTaskId, setCompletingTaskId] = useState(null);
+  const sharedTasksAllDoneRef = useRef(null);
+  const [selectedRole, setSelectedRole] = useState('');
+  const [isUpdatingRole, setIsUpdatingRole] = useState(false);
+
+  const sortSharedTasks = (items) =>
+    [...items].sort((a, b) => {
+      const aTime = new Date(a?.created_at || 0).getTime();
+      const bTime = new Date(b?.created_at || 0).getTime();
+      return bTime - aTime;
+    });
+  const isGroupObjectiveTask = (task) => task?.student_id == null && task?.user_id == null;
+
+  // Fetch squad and members data
+  useEffect(() => {
+    console.log('[SQUAD] 🎬 useEffect triggered!', { isSessionLoading, sessionUserId: sessionUser?.id });
+    
+    if (isSessionLoading || !sessionUser?.id) {
+      console.log('[SQUAD] ⏸️ Waiting for session:', { isSessionLoading, sessionUserId: sessionUser?.id });
+      return;
+    }
+
+    let realtimeChannel;
+    let tasksChannel;
+
+    const fetchSharedTasks = async (squadId) => {
+      console.log('[SQUAD] 🚀 fetchSharedTasks CALLED with squadId:', squadId);
+      try {
+        setSharedTasksLoading(true);
+        console.log('[SQUAD] 🔍 About to query tasks table - fetching ALL tasks for squad_id:', squadId);
+        
+        const query = supabase
+          .from('tasks')
+          .select('*')
+          .eq('squad_id', squadId)
+          .order('created_at', { ascending: false });
+          
+        console.log('[SQUAD] 🔎 Executing Supabase query...');
+        const { data, error } = await query;
+
+        console.log('[SQUAD] 📡 Query response:', { 
+          hasError: !!error, 
+          dataIsArray: Array.isArray(data),
+          dataLength: data?.length,
+          data 
+        });
+
+        if (error) {
+          console.error('[SQUAD] ❌ Error fetching shared tasks:', error);
+          setSharedTasks([]);
+          return;
+        }
+
+        console.log('[SQUAD] ✅ Raw tasks data returned:', data);
+        console.log('[SQUAD] 📊 Number of tasks found:', data?.length || 0);
+        
+        if (data && data.length > 0) {
+          data.forEach((task, index) => {
+            console.log(`[SQUAD] Task #${index + 1}:`, {
+              id: task.id,
+              title: task.title,
+              squad_id: task.squad_id,
+              user_id: task.user_id,
+              student_id: task.student_id,
+              task_category: task.task_category,
+              xp_reward: task.xp_reward,
+              is_completed: task.is_completed,
+              reroute_reason: task.reroute_reason
+            });
+          });
+        } else {
+          console.log('[SQUAD] ⚠️ No shared tasks found for this squad');
+        }
+
+        const sortedTasks = sortSharedTasks(Array.isArray(data) ? data : []);
+        console.log('[SQUAD] 📋 Setting shared tasks in state:', sortedTasks.length, 'tasks');
+        setSharedTasks(sortedTasks);
+      } catch (err) {
+        console.error('[SQUAD] 💥 Error in fetchSharedTasks:', err);
+        setSharedTasks([]);
+      } finally {
+        setSharedTasksLoading(false);
+      }
+    };
+
+    const fetchSquadData = async () => {
+      console.log('[SQUAD] 🏁 fetchSquadData STARTING for user:', sessionUser.id);
+      try {
+        setLoading(true);
+        console.log('[SQUAD] 📡 Fetching squad membership...');
+
+        // Find user's squad membership
+        const { data: membership, error: membershipError } = await supabase
+          .from('squad_members')
+          .select('squad_id')
+          .eq('student_id', sessionUser.id)
+          .limit(1)
+          .maybeSingle();
+
+        console.log('[SQUAD] 📋 Membership query result:', { membership, error: membershipError });
+
+        if (membershipError) {
+          console.error('[SQUAD] ❌ Error fetching membership:', membershipError.message);
+          setLoading(false);
+          return;
+        }
+
+        if (!membership?.squad_id) {
+          console.log('[SQUAD] ⚠️ User not in any squad yet - stopping here');
+          setSquad(null);
+          setMembers([]);
+          setSharedTasks([]);
+          setSharedTasksLoading(false);
+          sharedTasksAllDoneRef.current = null;
+          setLoading(false);
+          return;
+        }
+
+        const squadId = membership.squad_id;
+        console.log('[SQUAD] ✅ Found user squad_id:', squadId);
+
+        // Fetch squad details
+        console.log('[SQUAD] 📡 Fetching squad details for:', squadId);
+        const { data: squadData, error: squadError } = await supabase
+          .from('squads')
+          .select('*')
+          .eq('id', squadId)
+          .single();
+
+        if (squadError) {
+          console.error('[SQUAD] Error fetching squad:', squadError.message);
+          setLoading(false);
+          return;
+        }
+
+        console.log('[SQUAD] ✅ Squad data:', squadData);
+        setSquad(squadData);
+
+        // Calculate countdown from end_time
+        if (squadData.end_time) {
+          const endTime = new Date(squadData.end_time).getTime();
+          const now = new Date().getTime();
+          const secondsRemaining = Math.max(0, Math.floor((endTime - now) / 1000));
+          console.log('[SQUAD] Timer countdown:', { endTime, now, secondsRemaining });
+          setSecondsLeft(secondsRemaining);
+          setIsTimerActive(secondsRemaining > 0);
+        }
+
+        // Fetch all squad members with their XP (sorted by current_session_xp)
+        const { data: membersData, error: membersError } = await supabase
+          .from('squad_members')
+          .select('*')
+          .eq('squad_id', squadId)
+          .order('current_session_xp', { ascending: false });
+
+        if (membersError) {
+          console.error('[SQUAD] Error fetching members:', membersError.message);
+          setLoading(false);
+          return;
+        }
+
+        console.log('[SQUAD] ✅ Members:', membersData);
+        setMembers(membersData || []);
+        
+        console.log('[SQUAD] 🎯 About to call fetchSharedTasks with squadId:', squadId);
+        await fetchSharedTasks(squadId);
+        console.log('[SQUAD] ✅ fetchSharedTasks completed');
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('[SQUAD] 💥 Error in fetchSquadData:', err);
+        setLoading(false);
+      }
+    };
+
+    console.log('[SQUAD] 🎬 Calling fetchSquadData now...');
+    fetchSquadData();
+
+    // Set up real-time subscription for squad_members status changes
+    const setupRealtimeSubscription = async () => {
+      const { data: memberData } = await supabase
+        .from('squad_members')
+        .select('squad_id')
+        .eq('student_id', sessionUser.id)
+        .maybeSingle();
+
+      if (memberData?.squad_id) {
+        realtimeChannel = supabase
+          .channel(`squad-members-${memberData.squad_id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'squad_members',
+              filter: `squad_id=eq.${memberData.squad_id}`,
+            },
+            (payload) => {
+              console.log('[SQUAD] Real-time member update:', payload.eventType);
+              // Refresh members data
+              fetchSquadData();
+            }
+          )
+          .subscribe();
+
+        tasksChannel = supabase
+          .channel(`squad-tasks-${memberData.squad_id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'tasks',
+              filter: `squad_id=eq.${memberData.squad_id}`,
+            },
+            (payload) => {
+              console.log('[SQUAD] 🔔 Real-time event received:', {
+                eventType: payload.eventType,
+                table: payload.table,
+                new: payload?.new,
+                old: payload?.old
+              });
+              
+              const newTask = payload?.new;
+              if (!newTask) {
+                console.log('[SQUAD] ⚠️ No task data in payload');
+                return;
+              }
+              
+              console.log('[SQUAD] ✅ Processing real-time task:', {
+                id: newTask.id,
+                title: newTask.title,
+                user_id: newTask.user_id,
+                squad_id: newTask.squad_id
+              });
+              
+              setSharedTasks((prev) => {
+                const updated = sortSharedTasks([...prev.filter((task) => task.id !== newTask.id), newTask]);
+                console.log('[SQUAD] 📋 Updated tasks after real-time event:', updated.length);
+                return updated;
+              });
+            }
+          )
+          .subscribe();
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    return () => {
+      if (realtimeChannel) {
+        supabase.removeChannel(realtimeChannel);
+      }
+      if (tasksChannel) {
+        supabase.removeChannel(tasksChannel);
+      }
+    };
+  }, [isSessionLoading, sessionUser, squadRefreshKey]);
+
+  // Debug: Log sharedTasks state changes
+  useEffect(() => {
+    console.log('[SQUAD] 🔄 sharedTasks state updated:', {
+      count: sharedTasks.length,
+      tasks: sharedTasks.map(t => ({
+        id: t.id,
+        title: t.title,
+        user_id: t.user_id,
+        squad_id: t.squad_id
+      }))
+    });
+  }, [sharedTasks]);
+
+  // Timer countdown logic
+  useEffect(() => {
+    if (!isTimerActive) return undefined;
+    if (secondsLeft <= 0) {
+      setIsTimerActive(false);
+      return undefined;
+    }
+
+    const intervalId = setInterval(() => {
+      setSecondsLeft((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [isTimerActive, secondsLeft]);
+
+  useEffect(() => {
+    const groupObjectives = sharedTasks.filter((task) => isGroupObjectiveTask(task));
+    if (!groupObjectives.length) {
+      sharedTasksAllDoneRef.current = null;
+      return;
+    }
+
+    const allDone = groupObjectives.every((task) => task.is_completed);
+    if (sharedTasksAllDoneRef.current === null) {
+      sharedTasksAllDoneRef.current = allDone;
+      return;
+    }
+
+    if (!sharedTasksAllDoneRef.current && allDone) {
+      toast.success('Group Objective cleared! Team XP boosted!');
+    }
+
+    sharedTasksAllDoneRef.current = allDone;
+  }, [sharedTasks]);
+
+  const handleSharedTaskComplete = async (taskId) => {
+    if (!taskId) return;
+    setCompletingTaskId(taskId);
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ is_completed: true })
+        .eq('id', taskId);
+
+      if (error) {
+        console.error('[SQUAD] Error completing shared task:', error.message);
+        toast.error('Could not complete shared task.');
+      }
+    } catch (err) {
+      console.error('[SQUAD] Error completing shared task:', err);
+      toast.error('Could not complete shared task.');
+    } finally {
+      setCompletingTaskId(null);
+    }
+  };
+
+  const handleRoleChange = async (role) => {
+    if (!role || !squad?.id || !sessionUser?.id) return;
+    setSelectedRole(role);
+    setIsUpdatingRole(true);
+    try {
+      const { error } = await supabase
+        .from('squad_members')
+        .update({ role })
+        .eq('squad_id', squad.id)
+        .eq('student_id', sessionUser.id);
+
+      if (error) {
+        console.error('[SQUAD] Error updating role:', error.message);
+        toast.error('Could not update role.');
+      }
+    } catch (err) {
+      console.error('[SQUAD] Error updating role:', err);
+      toast.error('Could not update role.');
+    } finally {
+      setIsUpdatingRole(false);
+    }
+  };
+
+  // DEBUG: Manual fetch function
+  const handleManualFetchTasks = async () => {
+    if (!squad?.id) {
+      console.error('[SQUAD] ❌ No squad ID available for manual fetch');
+      toast.error('No squad ID available');
+      return;
+    }
+    
+    console.log('[SQUAD] 🔧 MANUAL FETCH triggered for squad_id:', squad.id);
+    
+    try {
+      setSharedTasksLoading(true);
+      
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('squad_id', squad.id)
+        .order('created_at', { ascending: false });
+
+      console.log('[SQUAD] 🔧 MANUAL FETCH result:', {
+        error,
+        dataLength: data?.length,
+        data
+      });
+
+      if (error) {
+        console.error('[SQUAD] ❌ Manual fetch error:', error);
+        toast.error('Error fetching tasks: ' + error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        console.log('[SQUAD] ✅ Found tasks! Setting state...');
+        setSharedTasks(sortSharedTasks(data));
+        toast.success(`Found ${data.length} tasks!`);
+      } else {
+        console.log('[SQUAD] ⚠️ No tasks found');
+        toast.info('No tasks found for this squad');
+        setSharedTasks([]);
+      }
+    } catch (err) {
+      console.error('[SQUAD] 💥 Manual fetch exception:', err);
+      toast.error('Exception: ' + err.message);
+    } finally {
+      setSharedTasksLoading(false);
+    }
+  };
+
+  const handleSyncTimer = async () => {
+    if (!squad?.id || !sessionUser?.id) {
+      toast.error('Squad not found. Please reload.');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      console.log('[SQUAD] Syncing timer via webhook for squad:', squad.id);
+
+      // Call n8n webhook to reset end_time for everyone in the squad
+      const response = await fetch('http://localhost:5678/webhook/generate-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'squad_sync',
+          squad_id: squad.id,
+          squad_type: squad.squad_type,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Webhook error: ${response.status}`);
+      }
+
+      console.log('[SQUAD] ✅ Timer sync triggered');
+      toast.success('Timer synced for the squad! ⏱️');
+
+      // Reset local timer to 25 minutes
+      setSecondsLeft(25 * 60);
+      setIsTimerActive(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[SQUAD] ❌ Sync error:', message);
+      toast.error(`Sync failed: ${message}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSquadSync = async () => {
+    if (!squad?.id || !sessionUser?.id) {
+      toast.error('Squad not found. Please reload.');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      console.log('[SQUAD] Generating AI tasks for squad:', squad.id);
+
+      // Call n8n webhook to generate AI-generated tasks for the squad
+      const response = await fetch('http://localhost:5678/webhook/generate-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          squad_id: squad.id,
+          squad_type: squad.squad_type,
+          description: squad.description,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Webhook error: ${response.status}`);
+      }
+
+      console.log('[SQUAD] ✅ AI tasks generation triggered');
+      toast.success('Generating personalized tasks for your squad! 🤖');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[SQUAD] ❌ Sync error:', message);
+      toast.error(`Failed to generate tasks: ${message}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const minutes = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
+  const seconds = String(secondsLeft % 60).padStart(2, '0');
+  const timeLabel = `${minutes}:${seconds}`;
+  const squadType = squad?.squad_type?.toLowerCase?.() || '';
+  const isProjectSquad = squadType === 'project';
+  const isStudyGroup = squadType === 'study' || squadType === 'study_group';
+  const FocusIcon = isProjectSquad ? Terminal : isStudyGroup ? Library : BookOpen;
+  const taskLabel = isProjectSquad
+    ? 'Tactical Sprints'
+    : isStudyGroup
+      ? 'Collective Insights'
+      : 'Squad Tasks';
+  const roleOptions = isProjectSquad
+    ? ['Architect', 'Coder', 'Designer', 'Researcher']
+    : isStudyGroup
+      ? ['Sage', 'Scholar', 'Note-taker', 'Quiz-master']
+      : [];
+  const defaultRole = isProjectSquad ? 'Architect' : isStudyGroup ? 'Sage' : '';
+  const commandMessage = squad?.reroute_reason?.trim?.();
+  const latestSquadTask = sortSharedTasks(
+    sharedTasks.filter((task) => task.squad_id === squad?.id && task?.reroute_reason)
+  )[0];
+  const commandersNote = latestSquadTask?.reroute_reason?.trim?.();
+  const groupObjectives = sharedTasks.filter((task) => isGroupObjectiveTask(task));
+  const groupObjectivesCompleted = groupObjectives.filter((task) => task.is_completed).length;
+  const groupObjectiveProgress = groupObjectives.length
+    ? Math.round((groupObjectivesCompleted / groupObjectives.length) * 100)
+    : 0;
+  const orderedTasks = [...sharedTasks].sort(
+    (a, b) => Number(!isGroupObjectiveTask(a)) - Number(!isGroupObjectiveTask(b))
+  );
+  
+  console.log('[SQUAD] 📊 Calculated orderedTasks:', {
+    sharedTasksLength: sharedTasks.length,
+    orderedTasksLength: orderedTasks.length,
+    groupObjectivesLength: groupObjectives.length,
+    loading,
+    sharedTasksLoading,
+    squadId: squad?.id,
+    hasSquad: !!squad
+  });
+  
+  const currentMember = members.find(
+    (member) => member.student_id === sessionUser?.id || member.user_id === sessionUser?.id
+  );
+
+  useEffect(() => {
+    if (!roleOptions.length) {
+      setSelectedRole('');
+      return;
+    }
+    setSelectedRole(currentMember?.role || defaultRole);
+  }, [currentMember?.role, defaultRole, roleOptions.length]);
+
+  return (
+    <div
+      className={`mx-auto max-w-6xl space-y-8 p-4 text-[14px] ${
+        isDarkMode ? 'bg-[#0F172A] text-slate-200' : 'bg-[#F8FAFC] text-slate-700'
+      }`}
+    >
+      {commandersNote && (
+        <div
+          className={`rounded-3xl border p-5 shadow-lg ${
+            isDarkMode
+              ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-100'
+              : 'border-indigo-200 bg-indigo-50 text-indigo-700'
+          }`}
+        >
+          <p className={`text-xs font-semibold uppercase tracking-[0.3em] ${isDarkMode ? 'text-indigo-200' : 'text-indigo-500'}`}>
+            Commander's Note
+          </p>
+          <p className="mt-2 text-sm font-semibold">{commandersNote}</p>
+        </div>
+      )}
+      {commandMessage && (
+        <div
+          className={`rounded-3xl border p-5 shadow-lg ${
+            isDarkMode
+              ? 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+              : 'border-rose-200 bg-rose-50 text-rose-700'
+          }`}
+        >
+          <p className={`text-xs font-semibold uppercase tracking-[0.3em] ${isDarkMode ? 'text-rose-200' : 'text-rose-500'}`}>
+            Command Message
+          </p>
+          <p className="mt-2 text-sm font-semibold">{commandMessage}</p>
+        </div>
+      )}
+      <div
+        className={`flex flex-col gap-6 rounded-3xl border p-8 backdrop-blur-md ${
+          isDarkMode
+            ? 'border-[#1E293B] bg-[#0F172A]/70'
+            : 'border-[#E2E8F0] bg-white/80'
+        }`}
+      >
+        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-5">
+            <div className="rounded-2xl bg-emerald-500/10 p-4 text-emerald-500">
+              <Users size={28} />
+            </div>
+            <div>
+              <h1 className={`text-3xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-[#334155]'}`}>
+                {loading ? 'Loading...' : (squad?.name || 'Study Squad')}
+              </h1>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {loading ? 'Loading members...' : `${members.filter(m => m.status === 'focusing').length} Members Active in War Room`}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button 
+              variant="secondary" 
+              className="px-6" 
+              onClick={handleSyncTimer}
+              disabled={isSyncing || loading}
+            >
+              {isSyncing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                'Sync Timer'
+              )}
+            </Button>
+            <Button 
+              variant="secondary" 
+              className="px-6" 
+              onClick={handleSquadSync}
+              disabled={isSyncing || loading}
+            >
+              {isSyncing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                'Sync Squad'
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              className={`px-4 ${
+                isDarkMode
+                  ? 'text-slate-300 hover:text-slate-100'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+              onClick={() => setIsSquadModalOpen(true)}
+            >
+              <Plus className="h-4 w-4" /> Create Squad
+            </Button>
+            <Button className="px-6">
+              <MessageSquare size={18} /> Join Audio
+            </Button>
+          </div>
+        </div>
+        <SharedTimer timeLabel={timeLabel} isActive={isTimerActive} isDarkMode={isDarkMode} />
+      </div>
+
+      <div className="flex flex-wrap gap-8 px-2">
+        {roleOptions.length > 0 && (
+          <div
+            className={`w-full rounded-2xl border px-4 py-3 ${
+              isDarkMode ? 'border-[#1E293B] bg-[#0F172A]/60' : 'border-[#E2E8F0] bg-white'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className={`text-xs font-semibold uppercase tracking-[0.2em] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Your Role
+                </p>
+                <p className={`text-sm ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+                  Choose the role that fits how you contribute.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {roleOptions.map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => handleRoleChange(role)}
+                    disabled={isUpdatingRole}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${
+                      selectedRole === role
+                        ? 'border-emerald-400 bg-emerald-500/10 text-emerald-400'
+                        : isDarkMode
+                          ? 'border-slate-700 text-slate-300 hover:border-slate-500'
+                          : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {loading ? (
+          <div className="flex items-center gap-2 text-slate-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Loading squad members...</span>
+          </div>
+        ) : (
+          members.map((member) => (
+            <MemberAvatar
+              key={member.id}
+              name={member.user_name || 'Unknown'}
+              role={member.role}
+              status={member.status === 'focusing' ? 'focusing' : 'offline'}
+              avatar={member.user_name?.slice(0, 2).toUpperCase() || 'U'}
+              isSyncing={member.status === 'focusing' && isTimerActive}
+              isDarkMode={isDarkMode}
+            />
+          ))
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <Card
+          className={`rounded-3xl border shadow-sm ${
+            isDarkMode ? 'border-[#1E293B] bg-[#1E293B]' : 'border-[#E2E8F0] bg-white'
+          }`}
+        >
+          <div className="mb-6 flex items-center gap-2">
+            <FocusIcon size={22} className="text-emerald-500" />
+            <div>
+              <h3 className={`text-xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-[#334155]'}`}>
+                Current Focus: {loading ? 'Loading...' : (squad?.focus || 'Study Session')}
+              </h3>
+              <p className={`text-xs uppercase tracking-[0.24em] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                {taskLabel}
+              </p>
+            </div>
+          </div>
+          {groupObjectives.length > 0 && (
+            <div className="mb-5">
+              <div className="flex items-center justify-between text-xs">
+                <span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>Group Objective Progress</span>
+                <span className={isDarkMode ? 'text-emerald-300' : 'text-emerald-600'}>
+                  {groupObjectivesCompleted}/{groupObjectives.length}
+                </span>
+              </div>
+              <div className={`mt-2 h-2 w-full overflow-hidden rounded-full ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${groupObjectiveProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+          <div className="space-y-3">
+            {loading || sharedTasksLoading ? (
+              <div className="flex items-center justify-center py-6 text-sm text-slate-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading tasks...
+              </div>
+            ) : orderedTasks.length === 0 ? (
+              <>
+                {console.log('[SQUAD] 🚫 No tasks to display - orderedTasks is empty')}
+                <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  No squad tasks yet.
+                </p>
+              </>
+            ) : (
+              <>
+                {console.log('[SQUAD] 🎯 Rendering tasks:', orderedTasks.length, 'tasks', orderedTasks)}
+                {orderedTasks.map((task) => {
+                  const isGroupObjective = isGroupObjectiveTask(task);
+                  console.log('[SQUAD] 🔨 Rendering task:', task.id, task.title, { isGroupObjective });
+                  return (
+                    <SquadTaskItem
+                      key={task.id}
+                      title={task.title}
+                      taskCategory={task.task_category}
+                      rerouteReason={task.reroute_reason}
+                      isCompleted={task.is_completed}
+                      xpReward={task.xp_reward}
+                      badgeLabel={isGroupObjective ? 'Group Objective' : taskLabel}
+                      onComplete={() => handleSharedTaskComplete(task.id)}
+                      isCompleting={completingTaskId === task.id}
+                      isGroupObjective={isGroupObjective}
+                      isDarkMode={isDarkMode}
+                    />
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </Card>
+
+        <Card
+          className={`rounded-3xl border shadow-sm ${
+            isDarkMode ? 'border-[#1E293B] bg-[#1E293B]' : 'border-[#E2E8F0] bg-white'
+          }`}
+        >
+          <div className="mb-6 flex items-center gap-2">
+            <Trophy size={22} className="text-amber-500" />
+            <h3 className={`text-xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-[#334155]'}`}>
+              Squad XP
+            </h3>
+          </div>
+          <div className="space-y-4">
+            {loading ? (
+              <div className="flex items-center justify-center py-6 text-sm text-slate-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading leaderboard...
+              </div>
+            ) : (
+              members.slice(0, 3).map((member, i) => (
+                <div key={member.id} className="flex items-center justify-between text-sm">
+                  <span className={isDarkMode ? 'text-slate-400' : 'text-slate-500'}>
+                    {i + 1}. {member.user_name || 'Unknown'}
+                  </span>
+                  <span className={`font-mono font-semibold ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                    {(member.current_session_xp || 0).toLocaleString()} XP
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+
+        <Card
+          className={`rounded-3xl border shadow-sm ${
+            isDarkMode ? 'border-[#1E293B] bg-[#1E293B]' : 'border-[#E2E8F0] bg-white'
+          }`}
+        >
+          <div className="mb-6 flex items-center gap-2">
+            <Trophy size={22} className="text-emerald-500" />
+            <h3 className={`text-xl font-semibold ${isDarkMode ? 'text-slate-100' : 'text-[#334155]'}`}>
+              Consistency Boost
+            </h3>
+          </div>
+          <div className={`space-y-3 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+            <p>• 18-day squad streak active</p>
+            <p>• 4 members synced today</p>
+            <p>• Next checkpoint at 6:30 PM</p>
+          </div>
+        </Card>
+      </div>
+
+      <CreateJoinSquad
+        isOpen={isSquadModalOpen}
+        onClose={() => setIsSquadModalOpen(false)}
+        onSquadChange={() => setSquadRefreshKey((prev) => prev + 1)}
+      />
+    </div>
+  );
+}

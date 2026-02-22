@@ -17,6 +17,8 @@ import {
   Users,
   User,
   Settings,
+  Brain,
+  CheckSquare,
 } from 'lucide-react';
 
 export function AppSidebar() {
@@ -24,17 +26,28 @@ export function AppSidebar() {
   const location = useLocation();
 
   const menuItems = [
-    { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-    { icon: Map, label: 'Learning Path', path: '/dashboard/path' },
-    { icon: Scroll, label: 'Quests', path: '/dashboard/quests' },
-    { icon: Users, label: 'Study Squad', path: '/dashboard/squad' },
+    { 
+      section: 'Dashboards',
+      items: [
+        { icon: Brain, label: 'Cognitive Analytics', path: '/dashboard', desc: 'Live brain analytics & HUD' },
+        { icon: CheckSquare, label: 'Task Generation', path: '/dashboard/tasks', desc: 'Task scheduling & organization' },
+      ]
+    },
+    { 
+      section: 'Learn',
+      items: [
+        { icon: Map, label: 'Learning Path', path: '/dashboard/path' },
+        { icon: Scroll, label: 'Quests', path: '/dashboard/quests' },
+        { icon: Users, label: 'Study Squad', path: '/dashboard/squad' },
+      ]
+    },
   ];
 
   const isActive = (path) => location.pathname === path;
 
   return (
     <Sidebar
-      className="flex h-screen flex-col border-r border-[#E2E8F0] bg-white/80 text-slate-700 dark:border-[#1E293B] dark:bg-[#0F172A] dark:text-slate-200"
+      className="flex h-screen flex-col border-r border-[#E2E8F0] bg-[#F8FAFC] text-slate-700 dark:border-[#1E293B] dark:bg-[#0F172A] dark:text-slate-200"
     >
       {/* Logo/Header */}
       <SidebarHeader className="border-b border-[#E2E8F0] px-4 py-6 dark:border-[#1E293B]">
@@ -55,30 +68,49 @@ export function AppSidebar() {
 
       {/* Main Navigation - Flex grow to push footer down */}
       <SidebarContent className="flex-1 px-3 py-4 overflow-y-auto">
-        <SidebarMenu>
-          {menuItems.map((item) => {
-            const active = isActive(item.path);
-            return (
-              <SidebarMenuItem key={item.path}>
-                <SidebarMenuButton
-                  asChild
-                  isActive={active}
-                  onClick={() => navigate(item.path)}
-                  className={`cursor-pointer rounded-lg transition-colors ${active ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/60'}`}
-                >
-                  <button className="flex items-center gap-3 w-full px-3 py-2">
-                    <item.icon
-                      className={`w-5 h-5 flex-shrink-0 ${active ? 'text-indigo-600 dark:text-indigo-200' : 'text-slate-500 dark:text-slate-400'}`}
-                    />
-                    <span className="text-sm font-medium">{item.label}</span>
-                  </button>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-
-        <SidebarSeparator className="my-4 bg-[#E2E8F0] dark:bg-[#1E293B]" />
+        {menuItems.map((section, sectionIdx) => (
+          <div key={sectionIdx}>
+            {sectionIdx > 0 && <SidebarSeparator className="my-4 bg-[#E2E8F0] dark:bg-[#1E293B]" />}
+            
+            {section.section && (
+              <div className="px-3 py-2 mb-2">
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  {section.section}
+                </p>
+              </div>
+            )}
+            
+            <SidebarMenu>
+              {section.items.map((item) => {
+                const active = isActive(item.path);
+                return (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={active}
+                      onClick={() => navigate(item.path)}
+                      className={`cursor-pointer rounded-lg transition-colors ${active ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/60'}`}
+                    >
+                      <button className="flex flex-col items-start gap-1 w-full px-3 py-2">
+                        <div className="flex items-center gap-3 w-full">
+                          <item.icon
+                            className={`w-5 h-5 flex-shrink-0 ${active ? 'text-indigo-600 dark:text-indigo-200' : 'text-slate-500 dark:text-slate-400'}`}
+                          />
+                          <span className="text-sm font-medium">{item.label}</span>
+                        </div>
+                        {item.desc && (
+                          <span className="text-xs text-slate-400 dark:text-slate-500 pl-8">
+                            {item.desc}
+                          </span>
+                        )}
+                      </button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </div>
+        ))}
 
         {/* Settings and Profile */}
         <SidebarMenu>

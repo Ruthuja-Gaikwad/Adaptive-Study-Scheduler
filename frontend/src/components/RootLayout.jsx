@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { SidebarTrigger } from './ui/sidebar';
 import { AppSidebar } from './AppSidebar';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabaseClient';
+import { MorningCheckinModal } from './MorningCheckinModal';
 import { useSessionBootstrap } from '../contexts/SessionBootstrapContext';
 import {
   LayoutDashboard,
@@ -18,6 +19,7 @@ export function RootLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { sessionUser, isSessionLoading } = useSessionBootstrap();
+  const [showCheckin, setShowCheckin] = useState(false);
 
   const mobileNavItems = [
     { icon: LayoutDashboard, label: 'Home', path: '/dashboard' },
@@ -57,6 +59,47 @@ export function RootLayout() {
       isMounted = false;
     };
   }, [isSessionLoading, navigate, sessionUser]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkTodaySleepLog = async () => {
+      if (isSessionLoading || !sessionUser) return;
+
+      try {
+        if (import.meta.env.DEV) {
+          setShowCheckin(true);
+          return;
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabase
+          .from('sleep_logs')
+          .select('id')
+          .eq('user_id', sessionUser.id)
+          .eq('sleep_date', today)
+          .maybeSingle();
+
+        if (!isMounted) return;
+        if (error) {
+          console.error('Error checking sleep log:', error);
+          return;
+        }
+
+        if (!data) {
+          setShowCheckin(true);
+        }
+      } catch (err) {
+        console.error('Error checking sleep log:', err);
+      }
+    };
+
+    checkTodaySleepLog();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isSessionLoading, sessionUser]);
 
   return (
     <div className="flex h-screen w-full bg-[#F8FAFC] text-[#334155] transition-colors dark:bg-[#0F172A] dark:text-slate-100">
@@ -109,6 +152,12 @@ export function RootLayout() {
           );
         })}
       </nav>
+
+      <MorningCheckinModal
+        isOpen={showCheckin}
+        onClose={() => setShowCheckin(false)}
+        userId={sessionUser?.id}
+      />
     </div>
   );
 }

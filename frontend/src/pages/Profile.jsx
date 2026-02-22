@@ -293,7 +293,7 @@ export function Profile() {
     return (
       <div
         className="min-h-screen w-full flex items-center justify-center"
-        style={{ backgroundColor: isDarkMode ? '#0F172A' : '#ffffff' }}
+        style={{ backgroundColor: isDarkMode ? '#0F172A' : '#F8FAFC' }}
       >
         <div className="flex flex-col items-center gap-4 text-slate-400">
           <Loader2 className="w-10 h-10 animate-spin" />
@@ -322,7 +322,7 @@ export function Profile() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             style={{
-              backgroundColor: isDarkMode ? '#1E293B' : '#F1F5F9',
+              backgroundColor: isDarkMode ? '#1E293B' : '#f1f5f9',
               color: isDarkMode ? '#CBD5F5' : '#475569',
             }}
             type="button"
@@ -402,7 +402,7 @@ export function Profile() {
             }
             className="mt-2 w-full rounded-xl border px-4 py-3 text-sm transition focus:outline-none focus:ring-2 focus:ring-[#06D6A0] focus:shadow-[0_0_0_3px_rgba(6,214,160,0.3)]"
             style={{
-              borderColor: isDarkMode ? '#1E293B' : '#CBD5F5',
+              borderColor: isDarkMode ? '#1E293B' : '#e2e8f0',
               backgroundColor: isDarkMode ? '#0F172A' : '#F8FAFC',
               color: isDarkMode ? '#F8FAFC' : '#0F172A',
             }}

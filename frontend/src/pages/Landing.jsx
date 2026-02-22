@@ -6,7 +6,7 @@ export function Landing() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-white via-[#F0FDFA] to-[#E0F2FE] dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 transition-colors">
+    <div className="min-h-screen w-full bg-gradient-to-br from-[#F8FAFC] via-[#F0FDFA] to-[#E0F2FE] dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 transition-colors">
       <div className="mx-auto w-full max-w-none px-6 py-12">
         <div className="grid lg:grid-cols-2 gap-12 items-center min-h-[calc(100vh-6rem)]">
           {/* Left Side - Text Content */}

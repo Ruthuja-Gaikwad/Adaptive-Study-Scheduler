@@ -83,13 +83,13 @@ export function UserDropdown() {
         <div className="flex-1 text-left">
           <p 
             className="text-sm font-semibold"
-            style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
+            style={{ color: isDarkMode ? '#f9fafb' : '#0f172a' }}
           >
             {displayName || 'User'}
           </p>
           <p 
             className="text-xs"
-            style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
+            style={{ color: isDarkMode ? '#9ca3af' : '#475569' }}
           >
             {roleLabel}
           </p>
@@ -97,7 +97,7 @@ export function UserDropdown() {
         <ChevronUp 
           className="w-4 h-4 transition-transform"
           style={{
-            color: isDarkMode ? '#9ca3af' : '#6b7280',
+            color: isDarkMode ? '#9ca3af' : '#475569',
             transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
             transition: 'transform 0.2s'
           }}
@@ -162,7 +162,7 @@ export function UserDropdown() {
                 {/* Divider */}
                 <div 
                   className="h-px my-1"
-                  style={{ backgroundColor: isDarkMode ? '#374151' : '#e5e7eb' }}
+                  style={{ backgroundColor: isDarkMode ? '#374151' : '#e2e8f0' }}
                 />
 
                 {/* Logout */}
@@ -194,12 +194,12 @@ function MenuItem({ icon, label, onClick, variant = 'default', rightElement, isD
       whileHover={{ x: 2 }}
       transition={{ duration: 0.15 }}
       style={{
-        color: isDanger ? '#dc2626' : (isDarkMode ? '#e5e7eb' : '#6b7280'),
+        color: isDanger ? '#dc2626' : (isDarkMode ? '#e5e7eb' : '#475569'),
         backgroundColor: isDanger ? (isDarkMode ? '#7f1d1d' : '#fee2e2') : (isDarkMode ? 'transparent' : 'transparent'),
       }}
     >
       <span style={{ 
-        color: isDanger ? '#dc2626' : (isDarkMode ? '#9ca3af' : '#6b7280') 
+        color: isDanger ? '#dc2626' : (isDarkMode ? '#9ca3af' : '#475569') 
       }}>
         {icon}
       </span>
