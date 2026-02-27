@@ -1,39 +1,278 @@
-import { useState } from 'react';
+      // STEP 3: Update memory_tracking for user/topic
+      if (newCompleted && task.topic_id) {
+        const today = new Date();
+        const todayStr = today.toISOString().slice(0, 10);
+        const nextRevision3 = new Date(today.getTime() + 3 * 86400000).toISOString().slice(0, 10);
+        const nextRevision2 = new Date(today.getTime() + 2 * 86400000).toISOString().slice(0, 10);
+        const uuid = crypto.randomUUID ? crypto.randomUUID() : (window.crypto && window.crypto.randomUUID && window.crypto.randomUUID());
+
+        // Check if record exists
+        const { data: memRow, error: memError } = await supabase
+          .from('memory_tracking')
+          .select('*')
+          .eq('user_id', sessionUser.id)
+          .eq('topic_id', task.topic_id)
+          .single();
+
+        if (memRow) {
+          await supabase
+            .from('memory_tracking')
+            .update({
+              revision_count: memRow.revision_count + 1,
+              last_revision_date: todayStr,
+              retention_score: Math.min(memRow.retention_score + 5, 100),
+              next_revision_date: nextRevision3,
+              decay_constant: Math.max(memRow.decay_constant - 0.01, 0.01)
+            })
+            .eq('id', memRow.id);
+        } else {
+          await supabase
+            .from('memory_tracking')
+            .insert({
+              id: uuid,
+              user_id: sessionUser.id,
+              topic_id: task.topic_id,
+              last_revision_date: todayStr,
+              revision_count: 1,
+              retention_score: 60,
+              next_revision_date: nextRevision2,
+              decay_constant: 0.1,
+              created_at: today.toISOString()
+            });
+        }
+      }
+import { useState, useEffect } from 'react';
 import { Checkbox } from './ui/checkbox';
 import { Progress } from './ui/progress';
 import { motion } from 'motion/react';
-import { Flame, Heart, Bell, BookOpen, Clock, Trophy } from 'lucide-react';
+import { Flame, Heart, Bell, BookOpen, Clock, Trophy, Brain, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDarkMode } from '../contexts/DarkModeContext';
+import { supabase } from '../lib/supabaseClient';
+import { useSessionBootstrap } from '../contexts/SessionBootstrapContext';
 
 export function Dashboard() {
   const { isDarkMode } = useDarkMode();
-  const [tasks, setTasks] = useState([
-    { id: '1', name: 'Read Pages 40-50', duration: '45 mins', subject: 'Math', xp: 50, completed: false },
-    { id: '2', name: 'Complete Problem Set 3', duration: '1 hour', subject: 'Physics', xp: 75, completed: false },
-    { id: '3', name: 'Watch Lecture 5', duration: '30 mins', subject: 'Chemistry', xp: 40, completed: false },
-    { id: '4', name: 'Review Flashcards', duration: '20 mins', subject: 'Biology', xp: 30, completed: true },
-  ]);
+  const { sessionUser, isSessionLoading } = useSessionBootstrap();
+  const [tasks, setTasks] = useState([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
+  const [totalXP, setTotalXP] = useState(0);
 
   const [sideQuests] = useState([
     { id: '1', name: 'The Weekend Warrior', description: 'Complete 5 hrs of study on Sat/Sun', current: 3, total: 5 },
     { id: '2', name: 'Flashcard Frenzy', description: 'Review 50 cards', current: 10, total: 50 },
   ]);
 
-  const handleTaskToggle = (taskId) => {
-    setTasks(prev => prev.map(task => {
-      if (task.id === taskId) {
-        const newCompleted = !task.completed;
-        if (newCompleted) {
-          // Confetti effect on completion
-          toast.success(`+${task.xp} XP earned! 🎉`, {
-            duration: 2000,
-          });
-        }
-        return { ...task, completed: newCompleted };
+  const [subjectFatigue, setSubjectFatigue] = useState([]);
+  const [isLoadingFatigue, setIsLoadingFatigue] = useState(true);
+
+  useEffect(() => {
+    if (isSessionLoading || !sessionUser?.id) {
+      setTotalXP(0);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchTotalXP = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('total_xp')
+        .eq('id', sessionUser.id)
+        .single();
+
+      if (!isMounted) return;
+
+      if (error) {
+        console.error('[DASHBOARD] Error fetching total XP:', error);
+        return;
       }
-      return task;
-    }));
+
+      setTotalXP(data?.total_xp ?? 0);
+    };
+
+    fetchTotalXP();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isSessionLoading, sessionUser?.id]);
+
+  const levelInfo = getLevel(totalXP);
+  const levelProgress = levelInfo.nextXP > 0
+    ? Math.round((levelInfo.currentXP / levelInfo.nextXP) * 100)
+    : 0;
+
+  useEffect(() => {
+    if (isSessionLoading || !sessionUser?.id) {
+      setTasks([]);
+      setIsLoadingTasks(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchTodayTasks = async () => {
+      try {
+        setIsLoadingTasks(true);
+        const today = new Date().toISOString().slice(0, 10);
+
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('id,title,status,subject_name,xp_reward,scheduled_time,estimated_minutes,cognitive_load_score,complexity')
+          .eq('student_id', sessionUser.id)
+          .eq('due_date', today)
+          .order('scheduled_time', { ascending: true });
+
+        if (error) {
+          console.error('[DASHBOARD] Error fetching today tasks:', error);
+          return;
+        }
+
+        const mapped = (data || []).map((task) => ({
+          id: task.id,
+          name: task.title || 'Untitled task',
+          duration: Number.isFinite(task.estimated_minutes)
+            ? `${task.estimated_minutes} mins`
+            : task.scheduled_time || '—',
+          subject_name: task.subject_name,
+          xp: task.xp_reward ?? 0,
+          completed: task.status === 'completed',
+          cognitive_load_score: task.cognitive_load_score,
+          complexity: task.complexity,
+        }));
+
+        if (isMounted) {
+          setTasks(mapped);
+        }
+      } catch (err) {
+        console.error('[DASHBOARD] Error in fetchTodayTasks:', err);
+      } finally {
+        if (isMounted) {
+          setIsLoadingTasks(false);
+        }
+      }
+    };
+
+    fetchTodayTasks();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isSessionLoading, sessionUser?.id]);
+
+  // Fetch subject fatigue data from Supabase
+  useEffect(() => {
+    if (isSessionLoading || !sessionUser?.id) {
+      return;
+    }
+
+    const fetchSubjectFatigue = async () => {
+      try {
+        setIsLoadingFatigue(true);
+        console.log('[DASHBOARD] Fetching subject fatigue for user:', sessionUser.id);
+
+        const { data, error } = await supabase
+          .from('subject_fatigue')
+          .select('*')
+          .eq('user_id', sessionUser.id)
+          .order('fatigue_score', { ascending: false });
+
+        if (error) {
+          console.error('[DASHBOARD] Error fetching subject fatigue:', error);
+          setIsLoadingFatigue(false);
+          return;
+        }
+
+        console.log('[DASHBOARD] ✅ Fetched', data?.length, 'subject fatigue records');
+        setSubjectFatigue(data || []);
+        setIsLoadingFatigue(false);
+      } catch (err) {
+        console.error('[DASHBOARD] Error in fetchSubjectFatigue:', err);
+        setIsLoadingFatigue(false);
+      }
+    };
+
+    fetchSubjectFatigue();
+
+    // Set up real-time subscription
+    const channel = supabase
+      .channel(`subject-fatigue-${sessionUser.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'subject_fatigue',
+          filter: `user_id=eq.${sessionUser.id}`,
+        },
+        (payload) => {
+          console.log('[DASHBOARD] Real-time fatigue update received:', payload.eventType);
+          fetchSubjectFatigue();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [sessionUser?.id, isSessionLoading]);
+
+  const handleTaskToggle = async (taskId, score = null, max_score = null) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) return;
+
+    const newCompleted = !task.completed;
+
+    setTasks((prev) => prev.map((item) => (
+      item.id === taskId ? { ...item, completed: newCompleted } : item
+    )));
+
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({
+          status: newCompleted ? 'completed' : 'pending',
+          completed_at: newCompleted ? new Date().toISOString() : null,
+        })
+        .eq('id', taskId)
+        .eq('student_id', sessionUser?.id);
+
+      if (error) {
+        throw error;
+      }
+
+      // STEP 2: Insert performance_logs if score and max_score are provided
+      if (newCompleted && typeof score === 'number' && typeof max_score === 'number') {
+        const uuid = crypto.randomUUID ? crypto.randomUUID() : (window.crypto && window.crypto.randomUUID && window.crypto.randomUUID());
+        const accuracy = Math.round((score / max_score) * 100);
+        const now = new Date().toISOString();
+        await supabase
+          .from('performance_logs')
+          .insert({
+            id: uuid,
+            user_id: sessionUser.id,
+            topic_id: task.topic_id,
+            test_type: 'task_completion',
+            score,
+            max_score,
+            accuracy,
+            created_at: now
+          });
+      }
+
+      if (newCompleted) {
+        toast.success(`+${task.xp} XP earned! 🎉`, {
+          duration: 2000,
+        });
+      }
+    } catch (err) {
+      console.error('[DASHBOARD] Failed to update task status:', err);
+      setTasks((prev) => prev.map((item) => (
+        item.id === taskId ? { ...item, completed: task.completed } : item
+      )));
+      toast.error('Could not update task. Please try again.');
+    }
   };
 
   return (
@@ -100,18 +339,7 @@ export function Dashboard() {
             </div>
 
             {/* Notifications */}
-            <button 
-              className="relative p-2 rounded-lg transition-colors"
-              style={{
-                backgroundColor: isDarkMode ? '#374151' : '#f3f4f6',
-              }}
-            >
-              <Bell 
-                className="w-5 h-5"
-                style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}
-              />
-              <div className="absolute top-1 right-1 w-2 h-2 bg-[#EF476F] rounded-full" />
-            </button>
+            {/* Notifications button removed as requested */}
           </div>
         </div>
       </div>
@@ -136,17 +364,7 @@ export function Dashboard() {
               <p className="text-white/90 text-lg mb-6">
                 Due in 3 hours. Reward: 150 XP + 'Newton's Apple' Badge
               </p>
-              <motion.button
-                className="px-8 py-4 font-semibold rounded-lg shadow-lg"
-                style={{
-                  backgroundColor: isDarkMode ? '#fbbf24' : '#FFB400',
-                  color: isDarkMode ? '#1f2937' : '#111827'
-                }}
-                whileHover={{ scale: 1.05, y: -2 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                Start Session
-              </motion.button>
+              {/* Start Session button removed as requested */}
             </div>
             <div className="hidden lg:block">
               <BookOpen className="w-48 h-48 text-white/20" />
@@ -172,20 +390,61 @@ export function Dashboard() {
                 Today's Waypoints
               </h3>
               <div className="space-y-3">
-                {tasks.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onToggle={() => handleTaskToggle(task.id)}
-                    isDarkMode={isDarkMode}
-                  />
-                ))}
+                {isLoadingTasks ? (
+                  <div className="text-center py-6" style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>
+                    Loading today&apos;s tasks...
+                  </div>
+                ) : tasks.length > 0 ? (
+                  tasks.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      onToggle={() => handleTaskToggle(task.id)}
+                      isDarkMode={isDarkMode}
+                    />
+                  ))
+                ) : (
+                  <div className="text-center py-6" style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>
+                    No tasks scheduled for today.
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
           {/* Right Column - Gamification Widgets */}
           <div className="space-y-6">
+            {/* Subject Fatigue Monitor */}
+            <div 
+              className="rounded-xl shadow-md p-6 transition-colors"
+              style={{
+                backgroundColor: isDarkMode ? '#1f2937' : '#ffffff'
+              }}
+            >
+              <h3 
+                className="text-xl font-semibold mb-4 flex items-center gap-2"
+                style={{ color: isDarkMode ? '#f9fafb' : '#111827' }}
+              >
+                <Brain className="w-5 h-5 text-purple-500" />
+                Subject Fatigue Monitor
+              </h3>
+              {isLoadingFatigue ? (
+                <div className="text-center py-4" style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>
+                  Loading fatigue data...
+                </div>
+              ) : subjectFatigue.length > 0 ? (
+                <div className="space-y-3">
+                  {subjectFatigue.slice(0, 5).map((subject) => (
+                    <SubjectFatigueRow key={subject.id} subject={subject} isDarkMode={isDarkMode} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-4" style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>
+                  No fatigue data yet. Complete some tasks to see your subject fatigue levels!
+                </div>
+              )}
+            </div>
+
             {/* Side Quests */}
             <div 
               className="rounded-xl shadow-md p-6 transition-colors"
@@ -213,11 +472,11 @@ export function Dashboard() {
             }}>
               <h3 className="text-lg font-semibold mb-2">Level Progress</h3>
               <div className="flex items-end justify-between mb-2">
-                <span className="text-3xl font-bold">Level 12</span>
-                <span className="text-sm opacity-90">750 / 1000 XP</span>
+                <span className="text-3xl font-bold">Level {levelInfo.level}</span>
+                <span className="text-sm opacity-90">{levelInfo.currentXP} / {levelInfo.nextXP} XP</span>
               </div>
-              <Progress value={75} className="h-3 bg-white/20" />
-              <p className="text-sm mt-2 opacity-90">250 XP until Level 13</p>
+              <Progress value={levelProgress} className="h-3 bg-white/20" />
+              <p className="text-sm mt-2 opacity-90">{Math.max(levelInfo.nextXP - levelInfo.currentXP, 0)} XP until Level {levelInfo.level + 1}</p>
             </div>
           </div>
         </div>
@@ -334,4 +593,79 @@ function getCardStyle(score) {
   if (value >= 1.5) return 'border-red-500 bg-red-900/10';
   if (value >= 1.2) return 'border-blue-500 bg-blue-900/10';
   return 'border-green-500 bg-green-900/10';
+}
+
+function getLevel(totalXP) {
+  let remainingXP = Math.max(0, Math.floor(totalXP));
+  let level = 1;
+  let xpForNext = 1000;
+
+  while (remainingXP >= xpForNext) {
+    remainingXP -= xpForNext;
+    level += 1;
+    xpForNext = Math.floor(xpForNext * 1.2);
+  }
+
+  return { level, currentXP: remainingXP, nextXP: xpForNext };
+}
+
+function SubjectFatigueRow({ subject, isDarkMode }) {
+  const getFatigueLevel = (score) => {
+    if (score >= 80) return { label: 'Critical', color: '#ef4444', bgColor: isDarkMode ? '#7f1d1d' : '#fee2e2' };
+    if (score >= 60) return { label: 'High', color: '#f97316', bgColor: isDarkMode ? '#7c2d12' : '#ffedd5' };
+    if (score >= 40) return { label: 'Moderate', color: '#eab308', bgColor: isDarkMode ? '#713f12' : '#fef9c3' };
+    if (score >= 20) return { label: 'Low', color: '#22c55e', bgColor: isDarkMode ? '#14532d' : '#dcfce7' };
+    return { label: 'Minimal', color: '#3b82f6', bgColor: isDarkMode ? '#1e3a8a' : '#dbeafe' };
+  };
+
+  const fatigueInfo = getFatigueLevel(subject.fatigue_score);
+  const lastStudied = subject.last_studied 
+    ? new Date(subject.last_studied).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : 'Never';
+
+  return (
+    <div 
+      className="rounded-lg p-3 border"
+      style={{
+        borderColor: isDarkMode ? '#4b5563' : '#e5e7eb',
+        backgroundColor: isDarkMode ? '#374151' : '#f9fafb'
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span 
+            className="font-semibold text-sm"
+            style={{ color: isDarkMode ? '#f3f4f6' : '#111827' }}
+          >
+            {subject.subject_name}
+          </span>
+          {subject.fatigue_score >= 60 && (
+            <AlertTriangle className="w-4 h-4 text-orange-500" />
+          )}
+        </div>
+        <span 
+          className="px-2 py-1 rounded text-xs font-medium"
+          style={{
+            backgroundColor: fatigueInfo.bgColor,
+            color: fatigueInfo.color
+          }}
+        >
+          {fatigueInfo.label}
+        </span>
+      </div>
+      
+      <Progress 
+        value={subject.fatigue_score} 
+        className="h-2 mb-2"
+        style={{
+          backgroundColor: isDarkMode ? '#1f2937' : '#e5e7eb'
+        }}
+      />
+      
+      <div className="flex justify-between items-center text-xs" style={{ color: isDarkMode ? '#9ca3af' : '#6b7280' }}>
+        <span>Score: {subject.fatigue_score}/100</span>
+        <span>Last studied: {lastStudied}</span>
+      </div>
+    </div>
+  );
 }

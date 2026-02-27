@@ -4,7 +4,6 @@ import { useDarkMode } from '../../contexts/DarkModeContext';
 import { supabase } from '../../lib/supabaseClient';
 import { useCognitiveCheckin } from '../../contexts/CognitiveCheckinContext';
 import { useSessionBootstrap } from '../../contexts/SessionBootstrapContext';
-import { useDashboardAnalytics } from '../../contexts/DashboardAnalyticsContext';
 import TopBar from './TopBar';
 import CSICore from './CSICore';
 import BurnoutRadar from './BurnoutRadar';
@@ -23,172 +22,87 @@ const CognitiveIntelligenceDashboard = () => {
   const { isDarkMode } = useDarkMode();
   const { csi, burnoutScore } = useCognitiveCheckin();
   const { sessionUser } = useSessionBootstrap();
-  const { csiTrend, subjectFatigue, missedTrends, burnoutRisk, isLoading: analyticsLoading } = useDashboardAnalytics();
+  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // State for dashboard data
-  const [dashboardData, setDashboardData] = useState({
-    csiScore: 82,
-    focusScore: 78,
-    retentionAvg: 84,
-    burnoutInverse: 70,
-    performanceTrend: 90,
-    burnoutScore: 30,
-    sleepDeficit: -1.5,
-    consecutiveDays: 5,
-    riskLevel: 'low',
-    accuracy: 85,
-    testCount: 5,
-    lastChange: 8,
-    avgDeepWork: 45,
-    taskSwitchRate: 12,
-    dailyFocusScore: 78,
-    userLevel: 12,
-    userXP: 7234,
-    maxXP: 10000,
-    streak: 15,
-  });
-
-  // Subscribe to real-time updates
   useEffect(() => {
-    let isMounted = true;
-    const channels = [];
+    async function loadDashboard() {
+      if (!sessionUser?.id) return;
+      const { data, error } = await supabase
+        .from('dashboard_master')
+        .select('*')
+        .eq('user_id', sessionUser.id)
+        .single();
+      setDashboard(data);
+      setLoading(false);
+    }
+    loadDashboard();
 
-    const setupSubscriptions = async () => {
-      try {
-        // Create cognitive_index subscription
-        const cognitiveChannel = supabase
-          .channel('cognitive_updates')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'cognitive_index',
-            },
-            (payload) => {
-              if (isMounted && payload.new) {
-                console.log('Cognitive Index Update:', payload);
-                setDashboardData(prev => ({
-                  ...prev,
-                  csiScore: payload.new.csi_score || prev.csiScore,
-                  focusScore: payload.new.focus_score || prev.focusScore,
-                  retentionAvg: payload.new.retention_avg || prev.retentionAvg,
-                }));
-              }
-            }
-          );
+    // Real-time updates
+    const channel = supabase
+      .channel('dashboard-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'cognitive_index',
+          filter: `user_id=eq.${sessionUser?.id}`
+        },
+        () => loadDashboard()
+      )
+      .subscribe();
 
-        await cognitiveChannel.subscribe();
-        if (isMounted) channels.push(cognitiveChannel);
-
-        // Create burnout_metrics subscription
-        const burnoutChannel = supabase
-          .channel('burnout_updates')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'burnout_metrics',
-            },
-            (payload) => {
-              if (isMounted && payload.new) {
-                console.log('Burnout Metrics Update:', payload);
-                setDashboardData(prev => ({
-                  ...prev,
-                  burnoutScore: payload.new.burnout_score || prev.burnoutScore,
-                  sleepDeficit: payload.new.sleep_deficit || prev.sleepDeficit,
-                  riskLevel: payload.new.risk_level || prev.riskLevel,
-                }));
-              }
-            }
-          );
-
-        await burnoutChannel.subscribe();
-        if (isMounted) channels.push(burnoutChannel);
-
-        // Create user_stats subscription
-        const statsChannel = supabase
-          .channel('stats_updates')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'user_stats',
-            },
-            (payload) => {
-              if (isMounted && payload.new) {
-                console.log('User Stats Update:', payload);
-                setDashboardData(prev => ({
-                  ...prev,
-                  userXP: payload.new.xp || prev.userXP,
-                  streak: payload.new.streak || prev.streak,
-                  accuracy: payload.new.accuracy || prev.accuracy,
-                }));
-              }
-            }
-          );
-
-        await statsChannel.subscribe();
-        if (isMounted) channels.push(statsChannel);
-
-        // Only set loading to false if component is still mounted
-        if (isMounted) {
-          setLoading(false);
-        }
-      } catch (error) {
-        console.error('Error setting up subscriptions:', error);
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    setupSubscriptions();
-
-    // Cleanup subscriptions safely
     return () => {
-      isMounted = false;
-
-      // Unsubscribe all channels that were successfully created
-      channels.forEach((channel) => {
-        if (channel && typeof channel.unsubscribe === 'function') {
-          channel.unsubscribe().catch((err) => {
-            console.warn('Error unsubscribing channel:', err);
-          });
-        }
-      });
-
-      // Also remove channels from Supabase
-      channels.forEach((channel) => {
-        if (channel) {
-          try {
-            supabase.removeChannel(channel);
-          } catch (err) {
-            console.warn('Error removing channel:', err);
-          }
-        }
-      });
+      supabase.removeChannel(channel);
     };
-  }, []);
+  }, [sessionUser]);
 
   const bgGradient = isDarkMode
     ? 'bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950'
     : 'bg-gradient-to-br from-white via-slate-50 to-slate-100';
 
-  const effectiveCsi = typeof csi === 'number' ? csi : dashboardData.csiScore;
-  const effectiveBurnout = typeof burnoutScore === 'number' ? burnoutScore : dashboardData.burnoutScore;
+  // CSI color logic
+  const getCsiColor = (score) => {
+    if (score >= 75) return "text-green-500";
+    if (score >= 50) return "text-yellow-500";
+    return "text-red-500";
+  };
+
+  // Status label logic
+  const getStatusLabel = (csi) => {
+    if (csi > 75) return "Stable & Optimal";
+    if (csi > 50) return "Moderate";
+    return "Burnout Risk";
+  };
+
+  // Performance trend logic
+  const trend = dashboard ? parseFloat(dashboard.performance_trend) : 0;
+  const trendIcon = trend > 0 ? "▲" : "▼";
+  const trendColor = trend > 0 ? "text-green-500" : "text-red-500";
+
+  // Null-safe effectiveBurnout definition
+  const effectiveBurnout = dashboard?.burnout_score ?? 0;
+
+  // Subject heatmap rendering
+  const subjectHeatmap = dashboard?.subject_fatigue
+    ? Object.entries(dashboard.subject_fatigue).map(([subject, score]) => (
+        <div key={subject} className="flex justify-between">
+          <span>{subject}</span>
+          <span>{score}</span>
+        </div>
+      ))
+    : null;
 
   return (
+
     <div className={`${bgGradient} min-h-screen transition-colors duration-300`}>
       {/* Top Bar */}
       <TopBar
-        userLevel={dashboardData.userLevel}
-        userXP={dashboardData.userXP}
-        maxXP={dashboardData.maxXP}
-        streak={dashboardData.streak}
+        userLevel={dashboard?.userLevel ?? 0}
+        userXP={dashboard?.userXP ?? 0}
+        maxXP={dashboard?.maxXP ?? 0}
+        streak={dashboard?.streak ?? 0}
       />
 
       {/* Main Content */}
@@ -212,39 +126,53 @@ const CognitiveIntelligenceDashboard = () => {
           >
             {/* 1. CSI Core - Center Hero Section */}
             <CSICore
-              csiScore={effectiveCsi}
-              focusScore={dashboardData.focusScore}
-              retentionAvg={dashboardData.retentionAvg}
-              burnoutInverse={dashboardData.burnoutInverse}
-              performanceTrend={dashboardData.performanceTrend}
+              csiScore={dashboard?.csi_score ?? 0}
+              focusScore={dashboard?.focus_score ?? 0}
+              retentionAvg={dashboard?.retention_avg ?? 0}
+              burnoutInverse={dashboard?.burnout_inverse ?? 0}
+              statusLabel={dashboard?.status_label ?? ''}
             />
 
             {/* 2. Three-Column Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Left: Burnout Radar */}
               <BurnoutRadar
-                burnoutScore={effectiveBurnout}
-                sleepDeficit={dashboardData.sleepDeficit}
-                consecutiveDays={dashboardData.consecutiveDays}
-                riskLevel={dashboardData.riskLevel}
+                burnoutScore={dashboard?.burnout_score ?? 0}
+                sleepDeficit={dashboard?.sleep_deficit ?? 0}
+                consecutiveDays={dashboard?.study_days ?? 0}
+                riskLevel={dashboard?.burnout_risk ?? 'low'}
               />
 
-              {/* Center: Performance & Focus (Stacked) */}
-              <div className="space-y-6">
+              {/* Center: Performance Card and Focus Card */}
+              <div className="flex flex-col gap-4">
                 <PerformanceCard
-                  accuracy={dashboardData.accuracy}
-                  testCount={dashboardData.testCount}
-                  lastChange={dashboardData.lastChange}
+                  trend={dashboard?.performance_trend ?? 0}
+                  trendIcon={dashboard?.performance_trend > 0 ? '▲' : '▼'}
+                  trendColor={dashboard?.performance_trend > 0 ? 'text-green-500' : 'text-red-500'}
+                  accuracy={dashboard?.accuracy ?? 0}
+                  tests={dashboard?.tests ?? 0}
+                  aiInsight={dashboard?.ai_insight ?? ''}
                 />
                 <FocusCard
-                  avgDeepWork={dashboardData.avgDeepWork}
-                  taskSwitchRate={dashboardData.taskSwitchRate}
-                  dailyFocusScore={dashboardData.dailyFocusScore}
+                  focusScore={dashboard?.focus_score ?? 0}
+                  deepWorkDuration={dashboard?.deep_work_duration ?? 0}
+                  taskSwitchRate={dashboard?.task_switch_rate ?? 0}
+                  qualityBadge={dashboard?.quality_badge ?? ''}
                 />
               </div>
 
               {/* Right: Memory Heatmap */}
-              <MemoryHeatmap />
+              <div className="p-4 rounded-lg shadow bg-white dark:bg-slate-800">
+                <div className="font-semibold mb-2">Memory Heatmap</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {dashboard?.subject_fatigue && Object.entries(dashboard.subject_fatigue).map(([subject, count]) => (
+                    <div key={subject} className="bg-slate-100 dark:bg-slate-700 rounded-lg p-3 flex flex-col items-center">
+                      <span className="font-semibold text-sm mb-1">{subject}</span>
+                      <span className="text-xl font-bold text-indigo-500">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* 3. Intervention Panel */}
@@ -255,33 +183,6 @@ const CognitiveIntelligenceDashboard = () => {
 
             {/* 5. Cognitive Forecast */}
             <CognitiveForecast />
-
-            {/* 6. COGNITIVE COMMAND CENTER - Analytics Dashboard */}
-            <div className="mt-12 pt-8 border-t" style={{ borderColor: isDarkMode ? '#374151' : '#e2e8f0' }}>
-              <h2
-                className="text-2xl font-bold mb-8"
-                style={{ color: isDarkMode ? '#f1f5f9' : '#0f172a' }}
-              >
-                🧠 Cognitive Command Center
-              </h2>
-
-              {/* Burnout Risk Indicator */}
-              <div className="mb-6">
-                <BurnoutRiskIndicator riskLevel={burnoutRisk || 'LOW'} />
-              </div>
-
-              {/* Analytics Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* CSI Trend Graph */}
-                <CSITrendGraph data={csiTrend} />
-
-                {/* Subject Fatigue Heatmap */}
-                <SubjectFatigueHeatmap data={subjectFatigue} />
-
-                {/* Missed Task Trends */}
-                <MissedTaskTrends data={missedTrends} />
-              </div>
-            </div>
           </motion.div>
         )}
       </div>

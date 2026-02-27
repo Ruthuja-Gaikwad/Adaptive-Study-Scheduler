@@ -25,9 +25,7 @@ export function MissedTaskTrends({ data }) {
           border: isDarkMode ? undefined : '1px solid #e2e8f0',
         }}
       >
-        <p style={{ color: isDarkMode ? '#9ca3af' : '#475569' }}>
-          No missed task data available yet.
-        </p>
+        {/* Removed 'No missed task data available yet.' message as requested */}
       </div>
     );
   }

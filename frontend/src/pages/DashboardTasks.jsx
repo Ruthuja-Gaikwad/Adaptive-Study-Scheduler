@@ -20,6 +20,7 @@ import {
   X,
   Moon,
   Sun,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -64,6 +65,7 @@ export function DashboardTasks() {
   const [filterPriority, setFilterPriority] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [currentView, setCurrentView] = useState('tasks');
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
 
   const [formData, setFormData] = useState({
     title: '',
@@ -75,21 +77,98 @@ export function DashboardTasks() {
     status: 'pending',
   });
 
-  // Load tasks from localStorage
+  // Fetch tasks from Supabase
   useEffect(() => {
-    const savedTasks = localStorage.getItem('adaptive_study_tasks');
-    if (savedTasks) {
+    let channel = null;
+
+    const fetchTasksFromSupabase = async () => {
       try {
-        setTasks(JSON.parse(savedTasks));
+        setIsLoadingTasks(true);
+        const { data: userData, error: authError } = await supabase.auth.getUser();
+        const user = userData?.user;
+
+        if (authError || !user) {
+          console.log('[TASKS] Not authenticated, loading from localStorage');
+          // Fallback to localStorage if not authenticated
+          const savedTasks = localStorage.getItem('adaptive_study_tasks');
+          if (savedTasks) {
+            try {
+              setTasks(JSON.parse(savedTasks));
+            } catch (err) {
+              console.error('[TASKS] Error loading tasks:', err);
+            }
+          }
+          setIsLoadingTasks(false);
+          return;
+        }
+
+        console.log('[TASKS] Fetching tasks for user:', user.id);
+
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('student_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('[TASKS] Error fetching from Supabase:', error);
+          // Fallback to localStorage on error
+          const savedTasks = localStorage.getItem('adaptive_study_tasks');
+          if (savedTasks) {
+            try {
+              setTasks(JSON.parse(savedTasks));
+            } catch (err) {
+              console.error('[TASKS] Error loading tasks:', err);
+            }
+          }
+          setIsLoadingTasks(false);
+          return;
+        }
+
+        console.log('[TASKS] ✅ Fetched', data?.length, 'tasks from Supabase');
+        setTasks(data || []);
+        setIsLoadingTasks(false);
+
+        // Set up real-time subscription after successful fetch
+        if (!channel) {
+          channel = supabase
+            .channel(`tasks-dashboard-${user.id}`)
+            .on(
+              'postgres_changes',
+              {
+                event: '*',
+                schema: 'public',
+                table: 'tasks',
+                filter: `student_id=eq.${user.id}`,
+              },
+              (payload) => {
+                console.log('[TASKS] Real-time update received:', payload.eventType);
+                fetchTasksFromSupabase();
+              }
+            )
+            .subscribe();
+        }
       } catch (err) {
-        console.error('Error loading tasks:', err);
+        console.error('[TASKS] Error in fetchTasksFromSupabase:', err);
+        setIsLoadingTasks(false);
       }
-    }
+    };
+
+    fetchTasksFromSupabase();
+
+    // Cleanup function
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, []);
 
-  // Save tasks to localStorage
+  // Save tasks to localStorage as backup
   useEffect(() => {
-    localStorage.setItem('adaptive_study_tasks', JSON.stringify(tasks));
+    if (tasks.length > 0) {
+      localStorage.setItem('adaptive_study_tasks', JSON.stringify(tasks));
+    }
   }, [tasks]);
 
   // Fetch subjects from user's profile
@@ -281,20 +360,95 @@ export function DashboardTasks() {
     setIsOpen(true);
   };
 
-  const handleDeleteTask = (id) => {
-    setTasks((prev) => prev.filter((task) => task.id !== id));
+  const handleDeleteTask = async (id) => {
+    try {
+      // Optimistically update UI
+      setTasks((prev) => prev.filter((task) => task.id !== id));
+
+      // Delete from Supabase
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user) {
+        const { error } = await supabase
+          .from('tasks')
+          .delete()
+          .eq('id', id)
+          .eq('student_id', userData.user.id);
+
+        if (error) {
+          console.error('[TASKS] Error deleting task from Supabase:', error);
+          // Task is already removed from UI, but you could revert here if needed
+        } else {
+          console.log('[TASKS] Task deleted from Supabase successfully');
+        }
+      }
+    } catch (err) {
+      console.error('[TASKS] Error in handleDeleteTask:', err);
+    }
   };
 
-  const handleStatusChange = (id, newStatus) => {
-    // Validate status
-    const safeStatus = newStatus?.toLowerCase?.();
-    const finalStatus = VALID_STATUSES.includes(safeStatus) ? safeStatus : 'pending';
-    
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.id === id ? { ...task, status: finalStatus } : task
-      )
-    );
+  const handleStatusChange = async (id, newStatus) => {
+    try {
+      // Validate status
+      const safeStatus = newStatus?.toLowerCase?.();
+      const finalStatus = VALID_STATUSES.includes(safeStatus) ? safeStatus : 'pending';
+      
+      // Get the task being updated to access its properties
+      const taskBeingUpdated = tasks.find((task) => task.id === id);
+      
+      // Optimistically update UI
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === id ? { ...task, status: finalStatus } : task
+        )
+      );
+
+      // Update in Supabase
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user) {
+        const { error } = await supabase
+          .from('tasks')
+          .update({ status: finalStatus })
+          .eq('id', id)
+          .eq('student_id', userData.user.id);
+
+        if (error) {
+          console.error('[TASKS] Error updating task status in Supabase:', error);
+        } else {
+          console.log('[TASKS] Task status updated in Supabase successfully');
+          
+          // If task is marked as completed, send data to n8n webhook
+          if (finalStatus === 'completed' && taskBeingUpdated) {
+            try {
+              console.log('[TASKS] Sending task completion data to n8n webhook');
+              const webhookPayload = {
+                user_id: userData.user.id,
+                subject_name: taskBeingUpdated.subject_name,
+                difficulty_level: taskBeingUpdated.priority,
+                cognitive_load_score: taskBeingUpdated.xp_reward || 0,
+                task_id: taskBeingUpdated.id,
+                task_title: taskBeingUpdated.title,
+                completed_at: new Date().toISOString(),
+              };
+
+              await fetch('http://localhost:5678/webhook-test/subject-fatigue-update', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(webhookPayload),
+              });
+
+              console.log('[TASKS] ✅ Task completion data sent to n8n webhook');
+            } catch (webhookErr) {
+              console.error('[TASKS] Error sending data to n8n webhook:', webhookErr);
+              // Don't throw - the task is already updated in Supabase
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[TASKS] Error in handleStatusChange:', err);
+    }
   };
 
   // Filter and search logic
@@ -753,19 +907,29 @@ export function DashboardTasks() {
           </TabsList>
 
           <TabsContent value="tasks" className="space-y-4">
-            <AnimatePresence mode="popLayout">
-              {filteredTasks.length > 0 ? (
-                filteredTasks.map((task) => <TaskCard key={task.id} task={task} />)
-              ) : (
-                <div className="rounded-lg border-2 border-dashed py-12 text-center" style={{
-                  borderColor: isDarkMode ? '#475569' : '#cbd5e1',
-                  backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc'
-                }}>
-                  <BookOpen className="mx-auto h-12 w-12" style={{ color: isDarkMode ? '#64748b' : '#94a3b8' }} />
-                  <p className="mt-2" style={{ color: isDarkMode ? '#94a3b8' : '#64748b' }}>No tasks found</p>
-                </div>
-              )}
-            </AnimatePresence>
+            {isLoadingTasks ? (
+              <div className="rounded-lg border-2 border-dashed py-12 text-center" style={{
+                borderColor: isDarkMode ? '#475569' : '#cbd5e1',
+                backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc'
+              }}>
+                <Loader2 className="mx-auto h-12 w-12 animate-spin" style={{ color: isDarkMode ? '#64748b' : '#94a3b8' }} />
+                <p className="mt-2" style={{ color: isDarkMode ? '#94a3b8' : '#64748b' }}>Loading tasks...</p>
+              </div>
+            ) : (
+              <AnimatePresence mode="popLayout">
+                {filteredTasks.length > 0 ? (
+                  filteredTasks.map((task) => <TaskCard key={task.id} task={task} />)
+                ) : (
+                  <div className="rounded-lg border-2 border-dashed py-12 text-center" style={{
+                    borderColor: isDarkMode ? '#475569' : '#cbd5e1',
+                    backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc'
+                  }}>
+                    <BookOpen className="mx-auto h-12 w-12" style={{ color: isDarkMode ? '#64748b' : '#94a3b8' }} />
+                    <p className="mt-2" style={{ color: isDarkMode ? '#94a3b8' : '#64748b' }}>No tasks found</p>
+                  </div>
+                )}
+              </AnimatePresence>
+            )}
           </TabsContent>
 
           <TabsContent value="subjects" className="space-y-6">

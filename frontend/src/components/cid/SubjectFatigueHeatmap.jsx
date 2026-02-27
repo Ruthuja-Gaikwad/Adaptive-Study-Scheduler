@@ -1,8 +1,56 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDarkMode } from '../../contexts/DarkModeContext';
+import { supabase } from '../../lib/supabaseClient';
 
-export function SubjectFatigueHeatmap({ data }) {
+export function SubjectFatigueHeatmap({ data, userId }) {
   const { isDarkMode } = useDarkMode();
+  const [isLoading, setIsLoading] = useState(false);
+  const [fatigueData, setFatigueData] = useState(data || {});
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!userId) {
+      setFatigueData(data || {});
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchSubjectFatigue = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      const { data: fatigueRows, error: fatigueError } = await supabase
+        .from('subject_fatigue')
+        .select('subject_name, fatigue_score')
+        .eq('user_id', userId)
+        .order('fatigue_score', { ascending: false });
+
+      if (!isMounted) return;
+
+      if (fatigueError) {
+        setError(fatigueError.message || 'Failed to load subject fatigue.');
+        setIsLoading(false);
+        return;
+      }
+
+      const mapped = (fatigueRows || []).reduce((acc, row) => {
+        if (row?.subject_name) {
+          acc[row.subject_name] = Number(row.fatigue_score || 0);
+        }
+        return acc;
+      }, {});
+
+      setFatigueData(mapped);
+      setIsLoading(false);
+    };
+
+    fetchSubjectFatigue();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userId, data]);
 
   const getFatigueColor = (value) => {
     // 0 = green (low fatigue), 1 = red (high fatigue)
@@ -14,17 +62,53 @@ export function SubjectFatigueHeatmap({ data }) {
   };
 
   const sortedData = useMemo(() => {
-    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
+    if (!fatigueData || typeof fatigueData !== 'object' || Array.isArray(fatigueData) || Object.keys(fatigueData).length === 0) {
       return [];
     }
 
-    return Object.entries(data)
-      .map(([subject, fatigue]) => ({
-        subject,
-        fatigue: Number(fatigue),
-      }))
+    return Object.entries(fatigueData)
+      .map(([subject, fatigue]) => {
+        const raw = Number(fatigue);
+        const normalized = raw > 1 ? raw / 100 : raw;
+        return {
+          subject,
+          fatigue: Math.max(0, Math.min(1, normalized)),
+        };
+      })
       .sort((a, b) => b.fatigue - a.fatigue);
-  }, [data]);
+  }, [fatigueData]);
+
+  if (isLoading) {
+    return (
+      <div
+        className="rounded-2xl p-8 text-center"
+        style={{
+          backgroundColor: isDarkMode ? 'rgba(15, 23, 42, 0.6)' : '#ffffff',
+          border: isDarkMode ? undefined : '1px solid #e2e8f0',
+        }}
+      >
+        <p style={{ color: isDarkMode ? '#9ca3af' : '#475569' }}>
+          Loading subject fatigue...
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        className="rounded-2xl p-8 text-center"
+        style={{
+          backgroundColor: isDarkMode ? 'rgba(15, 23, 42, 0.6)' : '#ffffff',
+          border: isDarkMode ? undefined : '1px solid #e2e8f0',
+        }}
+      >
+        <p style={{ color: isDarkMode ? '#fca5a5' : '#b91c1c' }}>
+          {error}
+        </p>
+      </div>
+    );
+  }
 
   if (!sortedData || sortedData.length === 0) {
     return (

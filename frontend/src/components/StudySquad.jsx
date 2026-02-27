@@ -100,6 +100,21 @@ const PowerCoreGauge = ({ squadXp, totalPossibleXp }) => {
 };
 
 // ============================================
+// UTILITY FUNCTIONS
+// ============================================
+const normalizeStatus = (status) => {
+  if (!status) return "todo";
+
+  const s = status.toLowerCase().replace(/\s+/g, "");
+
+  if (["todo", "inprogress", "completed", "overdue"].includes(s)) {
+    return s;
+  }
+
+  return "todo";
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 export function StudySquad() {
@@ -159,7 +174,14 @@ export function StudySquad() {
         console.log('[SQUAD] Tasks Data:', { data, error });
 
         if (error) throw error;
-        setSharedTasks(sortSharedTasks(Array.isArray(data) ? data : []));
+        
+        // Normalize status for all tasks
+        const normalizedTasks = (Array.isArray(data) ? data : []).map(task => ({
+          ...task,
+          status: normalizeStatus(task.status)
+        }));
+        
+        setSharedTasks(sortSharedTasks(normalizedTasks));
       } catch (err) {
         console.error('[SQUAD] Error fetching tasks:', err);
         setSharedTasks([]);

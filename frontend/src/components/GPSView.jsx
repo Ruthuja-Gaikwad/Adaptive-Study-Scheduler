@@ -70,6 +70,69 @@ export function GPSView({ onRerouteComplete }) {
   const { mode, rerouteStrategy, taskReduction, effectiveCsi, applyQuestBoost, setDailyQuestStreak, dailyQuestStreak } = useCognitiveCheckin();
   const [timelineNodes, setTimelineNodes] = useState([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
+
+  // Unified dashboard data state
+  const [dashboardData, setDashboardData] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+
+  // User name state
+  const [userName, setUserName] = useState("");
+
+  // Greeting logic
+  const getTimeOfDay = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "morning";
+    if (hour < 18) return "afternoon";
+    return "evening";
+  };
+  const greeting = `Good ${getTimeOfDay()}, ${userName}`;
+
+  // Status label logic
+  const getStatusLabel = (csi) => {
+    if (csi > 75) return "Stable & Optimal";
+    if (csi > 50) return "Moderate";
+    return "Burnout Risk";
+  };
+  // Fetch user name from profiles
+  useEffect(() => {
+    const fetchUserName = async () => {
+      if (!sessionUser?.id) return;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('id', sessionUser.id)
+        .single();
+      if (!error && data?.name) setUserName(data.name);
+    };
+    if (!isSessionLoading && sessionUser?.id) {
+      fetchUserName();
+    }
+  }, [isSessionLoading, sessionUser]);
+
+  // CSI color logic
+  const getCsiColor = (score) => {
+    if (score >= 75) return "text-green-500";
+    if (score >= 50) return "text-yellow-500";
+    return "text-red-500";
+  };
+
+  // Fetch dashboard_master data
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      if (!sessionUser?.id) return;
+      setDashboardLoading(true);
+      const { data, error } = await supabase
+        .from('dashboard_master')
+        .select('*')
+        .eq('user_id', sessionUser.id)
+        .single();
+      if (!error) setDashboardData(data);
+      setDashboardLoading(false);
+    };
+    if (!isSessionLoading && sessionUser?.id) {
+      fetchDashboardData();
+    }
+  }, [isSessionLoading, sessionUser]);
   
   const refreshTasks = async (userId) => {
     console.log('[REROUTE] Refreshing tasks for user:', userId);
@@ -237,6 +300,7 @@ export function GPSView({ onRerouteComplete }) {
 
   return (
     <div className="h-full overflow-auto">
+      {/* ...existing GPSView UI logic... */}
       {/* Header */}
       <div 
         className="border-b px-4 py-6 transition-colors md:px-8"
